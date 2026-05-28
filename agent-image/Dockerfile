@@ -16,9 +16,22 @@ COPY sidecar/ ./sidecar/
 RUN touch sidecar/src/main.rs
 RUN cargo build --release -p sidecar
 
-FROM ubuntu:22.04
+FROM ubuntu:24.04
 
-RUN apt-get update && apt-get install -y curl git ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y \
+    curl \
+    git \
+    ca-certificates \
+    gnupg \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV NODE_ENV=production
+RUN npm install -g @anthropic-ai/claude-code \
+    && npm cache clean --force
 
 WORKDIR /workspace
 

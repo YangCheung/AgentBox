@@ -69,5 +69,5 @@ fn resolve_command() -> String {
         return cmd;
     }
     let task = env::var("TASK").unwrap_or_else(|_| "default task".to_string());
-    format!("claude-code --dangerously-skip-permissions -p \"{}\"", task)
+    format!("claude --dangerously-skip-permissions -p \"{}\"", task)
 }

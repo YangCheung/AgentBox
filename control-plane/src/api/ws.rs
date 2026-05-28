@@ -18,7 +18,8 @@ pub async fn container_logs_ws(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_socket(socket, state.docker_manager, id))
+    let dm = state.docker_manager.clone().unwrap();
+    ws.on_upgrade(move |socket| handle_socket(socket, dm, id))
 }
 
 async fn handle_socket(socket: WebSocket, docker_manager: Arc<DockerManager>, container_id: String) {

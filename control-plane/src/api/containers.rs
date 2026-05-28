@@ -26,9 +26,18 @@ pub async fn create_container(
         format!("SKILL_REPOS={}", payload.skill_repos.join(",")),
     ];
 
+    if let Some(api_key) = std::env::var("ANTHROPIC_API_KEY").ok() {
+        let already_set = payload.env.as_ref().map_or(false, |e| e.contains_key("ANTHROPIC_API_KEY"));
+        if !already_set {
+            env_vars.push(format!("ANTHROPIC_API_KEY={}", api_key));
+        }
+    }
+
     if let Some(extra_env) = &payload.env {
         for (k, v) in extra_env {
-            env_vars.push(format!("{}={}", k, v));
+            if !env_vars.iter().any(|e| e.starts_with(&format!("{}=", k))) {
+                env_vars.push(format!("{}={}", k, v));
+            }
         }
     }
 
