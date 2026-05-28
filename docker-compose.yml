@@ -1,0 +1,39 @@
+services:
+  control-plane:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    environment:
+      - DATABASE_URL=sqlite:/data/agent_sandbox.db?mode=rwc
+      - SERVER_ADDR=0.0.0.0:8080
+      - AGENT_IMAGE=agent-sandbox:latest
+      - RUST_LOG=info
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - agent-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  agent-sandbox:
+    build:
+      context: .
+      dockerfile: agent-image/Dockerfile
+    environment:
+      - CONTROL_PLANE_URL=http://host.docker.internal:8080
+      - CONTAINER_ID=${CONTAINER_ID:-test-001}
+      - TASK=${TASK:-demo task}
+      - SKILL_REPOS=${SKILL_REPOS:-}
+      - RUST_LOG=info
+    depends_on:
+      control-plane:
+        condition: service_healthy
+    profiles:
+      - agent
+
+volumes:
+  agent-data:

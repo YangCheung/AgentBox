@@ -1,0 +1,7 @@
+[workspace]
+name = "agentbox"
+members = [
+    "control-plane",
+    "sidecar",
+]
+resolver = "2"
