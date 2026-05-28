@@ -29,7 +29,7 @@ impl DockerManager {
             ..Default::default()
         };
 
-        let host_config = HostConfig {
+        let _host_config = HostConfig {
             memory: Some(parse_memory(memory_limit)),
             cpu_quota: Some(parse_cpu(cpu_limit)),
             ..Default::default()
