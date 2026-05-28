@@ -26,12 +26,11 @@ impl DockerManager {
         let config = ContainerCreateBody {
             image: Some(image.to_string()),
             env: Some(env_vars),
-            ..Default::default()
-        };
-
-        let host_config = HostConfig {
-            memory: Some(parse_memory(memory_limit)),
-            cpu_quota: Some(parse_cpu(cpu_limit)),
+            host_config: Some(HostConfig {
+                memory: Some(parse_memory(memory_limit)),
+                cpu_quota: Some(parse_cpu(cpu_limit)),
+                ..Default::default()
+            }),
             ..Default::default()
         };
 
@@ -67,6 +66,10 @@ impl DockerManager {
             .await
             .map_err(|e| AppError::DockerError(e.to_string()))?;
         Ok(())
+    }
+
+    pub fn client(&self) -> &Docker {
+        &self.docker
     }
 
     pub async fn container_exists(&self, name: &str) -> bool {

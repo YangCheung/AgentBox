@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 axum = { version = "0.8", features = ["ws"] }
+futures-util = "0.3"
 bollard = { version = "0.21" }
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }

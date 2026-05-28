@@ -76,6 +76,10 @@ async fn main() {
             "/api/containers/{id}/status",
             post(api::containers::report_status),
         )
+        .route(
+            "/api/containers/{id}/logs",
+            get(api::ws::container_logs_ws),
+        )
         .layer(cors)
         .with_state(app_state);
 

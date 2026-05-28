@@ -1,5 +1,4 @@
 [workspace]
-name = "agentbox"
 members = [
     "control-plane",
     "sidecar",
