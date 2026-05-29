@@ -5,12 +5,17 @@ mod db;
 mod docker;
 mod error;
 mod models;
+mod redact;
 
 use std::sync::Arc;
 
-use axum::{middleware, routing::get, routing::post, routing::delete, Router};
-use axum::http::HeaderValue;
-use tower_http::cors::{AllowOrigin, Any, CorsLayer};
+use axum::{
+    http::{HeaderValue, Method},
+    middleware,
+    routing::{delete, get, post},
+    Router,
+};
+use tower_http::cors::CorsLayer;
 
 use config::Config;
 use db::sqlite::Database;
@@ -22,6 +27,7 @@ pub struct AppState {
     pub db: Database,
     pub docker_manager: Option<Arc<DockerManager>>,
     pub config: Config,
+    pub log_secrets: Arc<Vec<String>>,
 }
 
 #[tokio::main]
@@ -46,10 +52,19 @@ async fn main() {
             .expect("Failed to connect to Docker"),
     );
 
+    let log_secrets = Arc::new(redact::collect_secret_values());
+    if !log_secrets.is_empty() {
+        tracing::info!(
+            "Log redaction enabled for {} secret value(s)",
+            log_secrets.len()
+        );
+    }
+
     let app_state = AppState {
         db: db.clone(),
         docker_manager: Some(docker_manager.clone()),
         config: config.clone(),
+        log_secrets,
     };
 
     let lifecycle_manager = LifecycleManager::new(db.clone(), Some(docker_manager.clone()));
@@ -57,22 +72,7 @@ async fn main() {
         lifecycle_manager.start().await;
     });
 
-    let cors = if let Some(ref origin) = config.cors_origin {
-        CorsLayer::new()
-            .allow_origin(
-                origin
-                    .parse::<HeaderValue>()
-                    .map(AllowOrigin::exact)
-                    .unwrap_or(AllowOrigin::any()),
-            )
-            .allow_methods(Any)
-            .allow_headers(Any)
-    } else {
-        CorsLayer::new()
-            .allow_origin(Any)
-            .allow_methods(Any)
-            .allow_headers(Any)
-    };
+    let cors = build_cors(&config);
 
     let app = Router::new()
         .route("/health", get(api::health::health_check))
@@ -112,4 +112,42 @@ async fn main() {
     axum::serve(listener, app)
         .await
         .expect("Server failed");
+}
+
+fn build_cors(config: &Config) -> CorsLayer {
+    let methods = [
+        Method::GET,
+        Method::POST,
+        Method::PUT,
+        Method::PATCH,
+        Method::DELETE,
+        Method::OPTIONS,
+    ];
+
+    if config.allowed_origins.iter().any(|o| o == "*") {
+        tracing::warn!("CORS: ALLOWED_ORIGINS=* — wildcard origin enabled");
+        return CorsLayer::new()
+            .allow_origin(tower_http::cors::Any)
+            .allow_methods(methods)
+            .allow_headers(tower_http::cors::Any);
+    }
+
+    let origins: Vec<HeaderValue> = config
+        .allowed_origins
+        .iter()
+        .filter_map(|o| match HeaderValue::from_str(o) {
+            Ok(v) => Some(v),
+            Err(e) => {
+                tracing::warn!("Invalid origin '{}' ignored: {}", o, e);
+                None
+            }
+        })
+        .collect();
+
+    tracing::info!("CORS: allowed origins = {:?}", config.allowed_origins);
+    CorsLayer::new()
+        .allow_origin(origins)
+        .allow_methods(methods)
+        .allow_headers([axum::http::header::AUTHORIZATION, axum::http::header::CONTENT_TYPE])
+        .allow_credentials(true)
 }

@@ -1,8 +1,10 @@
 mod health;
+mod query;
 mod reporter;
-mod runner;
 
 use std::env;
+
+use axum::{routing::get, routing::post, Router};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -16,58 +18,42 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let control_plane_url =
         env::var("CONTROL_PLANE_URL").unwrap_or_else(|_| "http://localhost:8080".to_string());
     let container_id = env::var("CONTAINER_ID").expect("CONTAINER_ID must be set");
+    let bind_addr = env::var("SIDECAR_ADDR").unwrap_or_else(|_| "0.0.0.0:9000".to_string());
 
     tracing::info!("Sidecar starting for container {}", container_id);
 
-    let reporter = reporter::StatusReporter::new(control_plane_url, container_id);
+    let reporter = reporter::StatusReporter::new(control_plane_url, container_id.clone());
 
-    // 启动健康检查（后台心跳）
+    // 心跳：后台向 control-plane 上报存活
     let r = reporter.clone();
     tokio::spawn(async move {
         health::start_health_check(r).await;
     });
 
-    // 发送初始状态
-    reporter
-        .report_status("running", 0.0, "initializing", vec!["Starting sidecar...".to_string()])
-        .await?;
-
-    // 确定要执行的命令
-    let command = resolve_command();
-    tracing::info!("Running command: {}", command);
-
-    // 执行任务
-    let result = runner::run_command(&command, reporter.clone()).await?;
-
-    if result.success {
-        reporter
-            .report_status(
-                "completed",
-                1.0,
-                "done",
-                vec![format!("Exit code: {}", result.exit_code)],
-            )
-            .await?;
-        tracing::info!("Task completed with exit code {}", result.exit_code);
-    } else {
-        reporter
-            .report_status(
-                "failed",
-                1.0,
-                "failed",
-                vec![format!("Exit code: {}", result.exit_code)],
-            )
-            .await?;
-        tracing::error!("Task failed with exit code {}", result.exit_code);
+    // 初始上报
+    if let Err(e) = reporter
+        .report_status(
+            "running",
+            0.0,
+            "ready",
+            vec!["sidecar listening".to_string()],
+        )
+        .await
+    {
+        tracing::warn!("initial status report failed: {}", e);
     }
 
+    let app = Router::new()
+        .route("/health", get(health_endpoint))
+        .route("/query", post(query::handle_query));
+
+    let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
+    tracing::info!("Sidecar listening on {}", bind_addr);
+
+    axum::serve(listener, app).await?;
     Ok(())
 }
 
-fn resolve_command() -> String {
-    if let Ok(cmd) = env::var("AGENT_COMMAND") {
-        return cmd;
-    }
-    let task = env::var("TASK").unwrap_or_else(|_| "default task".to_string());
-    format!("claude --dangerously-skip-permissions -p \"{}\"", task)
+async fn health_endpoint() -> &'static str {
+    "ok"
 }

@@ -66,8 +66,9 @@ mod tests {
                 server_addr: String::new(),
                 agent_image: String::new(),
                 api_key: api_key.map(String::from),
-                cors_origin: None,
+                allowed_origins: Vec::new(),
             },
+            log_secrets: std::sync::Arc::new(Vec::new()),
         }
     }
 
