@@ -76,7 +76,10 @@ async fn main() {
 
     let app = Router::new()
         .route("/health", get(api::health::health_check))
-        .route("/api/containers", post(api::containers::create_container))
+        .route(
+            "/api/containers",
+            get(api::containers::list_containers).post(api::containers::create_container),
+        )
         .route(
             "/api/containers/{id}",
             get(api::containers::get_container),
@@ -89,6 +92,7 @@ async fn main() {
             "/api/containers/{id}/status",
             post(api::containers::report_status),
         )
+        .route("/api/stats", get(api::containers::get_stats))
         .route(
             "/api/containers/{id}/logs",
             get(api::ws::container_logs_ws),

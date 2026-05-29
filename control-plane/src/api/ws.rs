@@ -2,24 +2,40 @@ use std::sync::Arc;
 
 use axum::{
     extract::ws::{Message, WebSocket, WebSocketUpgrade},
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
 };
 use bollard::container::LogOutput;
 use bollard::query_parameters::LogsOptions;
 use futures_util::{SinkExt, StreamExt};
+use serde::Deserialize;
 use tokio::sync::mpsc;
 
 use crate::docker::manager::DockerManager;
 use crate::redact::redact;
 use crate::AppState;
 
+#[derive(Deserialize)]
+pub struct LogsQuery {
+    pub token: Option<String>,
+}
+
 pub async fn container_logs_ws(
     ws: WebSocketUpgrade,
     State(state): State<AppState>,
     Path(id): Path<String>,
+    Query(query): Query<LogsQuery>,
 ) -> Response {
+    if let Some(expected) = &state.config.api_key {
+        match &query.token {
+            Some(t) if t == expected => {}
+            _ => {
+                return (StatusCode::UNAUTHORIZED, "Unauthorized").into_response();
+            }
+        }
+    }
+
     let dm = match state.docker_manager.clone() {
         Some(dm) => dm,
         None => {

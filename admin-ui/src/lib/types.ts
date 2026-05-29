@@ -1,0 +1,46 @@
+export interface Container {
+  id: string
+  task: string
+  status: string
+  docker_id: string | null
+  skill_repos: string
+  cpu_limit: string
+  memory_limit: string
+  idle_timeout: number
+  max_lifetime: number
+  created_at: string
+  last_activity: string
+}
+
+export type ContainerStatus = 'Creating' | 'Running' | 'Idle' | 'Stopping' | 'Stopped' | 'Failed'
+
+export interface ContainerResponse {
+  id: string
+  status: ContainerStatus
+  created_at: string
+  docker_id: string | null
+}
+
+export interface CreateContainerRequest {
+  task: string
+  skill_repos: string[]
+  skill_branch?: string
+  cpu_limit?: string
+  memory_limit?: string
+  idle_timeout?: number
+  max_lifetime?: number
+  env?: Record<string, string>
+}
+
+export interface PaginatedResponse<T> {
+  data: T[]
+  total: number
+  page: number
+  per_page: number
+  total_pages: number
+}
+
+export interface StatsResponse {
+  total: number
+  by_status: Record<string, number>
+}

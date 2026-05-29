@@ -75,3 +75,7 @@ Docker image for agent containers. Contains the sidecar binary and the `claude` 
 **Control Plane**: `DATABASE_URL` (default `sqlite:agent_sandbox.db?mode=rwc`), `SERVER_ADDR` (default `0.0.0.0:8080`), `AGENT_IMAGE` (default `agent-sandbox:latest`), `API_KEY` (optional; if set, all non-/health routes require `Authorization: Bearer <key>`), `ALLOWED_ORIGINS` (comma-separated; default localhost only; `*` for wildcard), `ANTHROPIC_API_KEY` (forwarded into agent containers and redacted from log streams), `RUST_LOG` (default `info`)
 
 **Sidecar/Container**: `CONTAINER_ID` (required), `CONTROL_PLANE_URL` (for heartbeats), `SIDECAR_ADDR` (default `0.0.0.0:9000`), `SKILL_REPOS`, `ANTHROPIC_API_KEY`, `TASK` (legacy; not consumed by sidecar after the cc-sdk migration — query is now request-driven)
+
+## Frontend (`admin-ui/`)
+
+**UI 组件必须使用 shadcn/ui**（位于 `src/components/ui/`）。非必要不得直接使用 HTML 原生 UI 元素（如 `<button>`、`<input>`、`<select>` 等），始终优先使用 shadcn 封装好的组件（`Button`、`Input`、`Select` 等），以保证一致的设计语言和可访问性。

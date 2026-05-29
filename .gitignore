@@ -23,6 +23,10 @@ Thumbs.db
 # Docker
 docker-compose.override.yml
 
+# Frontend
+admin-ui/node_modules/
+admin-ui/dist/
+
 # Environment
 .env
 .env.local

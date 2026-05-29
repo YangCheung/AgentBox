@@ -1,6 +1,6 @@
 use axum::{
     extract::{Request, State},
-    http::{header, StatusCode},
+    http::{header, Method, StatusCode},
     middleware::Next,
     response::Response,
 };
@@ -16,6 +16,10 @@ pub async fn api_key_auth(
         Some(key) => key.clone(),
         None => return next.run(request).await,
     };
+
+    if request.method() == Method::OPTIONS {
+        return next.run(request).await;
+    }
 
     if request.uri().path() == "/health" {
         return next.run(request).await;

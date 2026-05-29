@@ -91,3 +91,34 @@ pub struct StatusReport {
     pub logs: Vec<String>,
     pub timestamp: String,
 }
+
+#[derive(Debug, Deserialize)]
+pub struct ListContainersQuery {
+    pub status: Option<String>,
+    pub search: Option<String>,
+    pub sort_by: Option<String>,
+    pub sort_order: Option<String>,
+    pub page: Option<i64>,
+    pub per_page: Option<i64>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PaginatedResponse<T: Serialize> {
+    pub data: Vec<T>,
+    pub total: i64,
+    pub page: i64,
+    pub per_page: i64,
+    pub total_pages: i64,
+}
+
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct StatusCount {
+    pub status: String,
+    pub count: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct StatsResponse {
+    pub total: i64,
+    pub by_status: std::collections::HashMap<String, i64>,
+}
