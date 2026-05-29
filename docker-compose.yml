@@ -35,5 +35,16 @@ services:
     profiles:
       - agent
 
+  admin-ui:
+    build:
+      context: ./admin-ui
+      dockerfile: Dockerfile
+    ports:
+      - "3000:80"
+    environment:
+      - CONTROL_PLANE_URL=http://control-plane:8080
+    depends_on:
+      - control-plane
+
 volumes:
   agent-data:

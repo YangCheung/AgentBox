@@ -6,6 +6,7 @@ pub struct Config {
     pub server_addr: String,
     pub agent_image: String,
     pub api_key: Option<String>,
+    pub cors_origin: Option<String>,
 }
 
 impl Config {
@@ -18,6 +19,7 @@ impl Config {
             agent_image: env::var("AGENT_IMAGE")
                 .unwrap_or_else(|_| "agent-sandbox:latest".to_string()),
             api_key: env::var("API_KEY").ok().filter(|k| !k.is_empty()),
+            cors_origin: env::var("CORS_ORIGIN").ok().filter(|o| !o.is_empty()),
         }
     }
 }

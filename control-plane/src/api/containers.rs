@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     Json,
 };
@@ -129,4 +129,38 @@ pub async fn report_status(
     }
 
     Ok(StatusCode::OK)
+}
+
+pub async fn list_containers(
+    State(state): State<AppState>,
+    Query(params): Query<ListContainersQuery>,
+) -> Result<Json<PaginatedResponse<Container>>, AppError> {
+    let page = params.page.unwrap_or(1);
+    let per_page = params.per_page.unwrap_or(20);
+    let sort_by = params.sort_by.as_deref().unwrap_or("created_at");
+    let sort_order = params.sort_order.as_deref().unwrap_or("desc");
+    let status = params.status.as_deref();
+    let search = params.search.as_deref();
+
+    let (data, total) = state
+        .db
+        .list_containers(status, search, sort_by, sort_order, page, per_page)
+        .await?;
+
+    let total_pages = ((total as f64) / (per_page as f64)).ceil() as i64;
+
+    Ok(Json(PaginatedResponse {
+        data,
+        total,
+        page,
+        per_page,
+        total_pages,
+    }))
+}
+
+pub async fn get_stats(
+    State(state): State<AppState>,
+) -> Result<Json<StatsResponse>, AppError> {
+    let stats = state.db.get_stats().await?;
+    Ok(Json(stats))
 }

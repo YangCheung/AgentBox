@@ -9,7 +9,8 @@ mod models;
 use std::sync::Arc;
 
 use axum::{middleware, routing::get, routing::post, routing::delete, Router};
-use tower_http::cors::{Any, CorsLayer};
+use axum::http::HeaderValue;
+use tower_http::cors::{AllowOrigin, Any, CorsLayer};
 
 use config::Config;
 use db::sqlite::Database;
@@ -56,14 +57,29 @@ async fn main() {
         lifecycle_manager.start().await;
     });
 
-    let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any);
+    let cors = if let Some(ref origin) = config.cors_origin {
+        CorsLayer::new()
+            .allow_origin(
+                origin
+                    .parse::<HeaderValue>()
+                    .map(AllowOrigin::exact)
+                    .unwrap_or(AllowOrigin::any()),
+            )
+            .allow_methods(Any)
+            .allow_headers(Any)
+    } else {
+        CorsLayer::new()
+            .allow_origin(Any)
+            .allow_methods(Any)
+            .allow_headers(Any)
+    };
 
     let app = Router::new()
         .route("/health", get(api::health::health_check))
-        .route("/api/containers", post(api::containers::create_container))
+        .route(
+            "/api/containers",
+            get(api::containers::list_containers).post(api::containers::create_container),
+        )
         .route(
             "/api/containers/{id}",
             get(api::containers::get_container),
@@ -76,6 +92,7 @@ async fn main() {
             "/api/containers/{id}/status",
             post(api::containers::report_status),
         )
+        .route("/api/stats", get(api::containers::get_stats))
         .route(
             "/api/containers/{id}/logs",
             get(api::ws::container_logs_ws),
