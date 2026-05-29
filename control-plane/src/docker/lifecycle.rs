@@ -34,12 +34,31 @@ impl LifecycleManager {
         let now = chrono::Utc::now();
 
         for container in containers {
-            let created_at = chrono::DateTime::parse_from_rfc3339(&container.created_at)
-                .unwrap_or_default()
-                .with_timezone(&chrono::Utc);
-            let last_activity = chrono::DateTime::parse_from_rfc3339(&container.last_activity)
-                .unwrap_or_default()
-                .with_timezone(&chrono::Utc);
+            let created_at = match chrono::DateTime::parse_from_rfc3339(&container.created_at) {
+                Ok(dt) => dt.with_timezone(&chrono::Utc),
+                Err(e) => {
+                    tracing::error!(
+                        "Container {} has invalid created_at '{}': {} — skipping lifecycle check",
+                        container.id,
+                        container.created_at,
+                        e
+                    );
+                    continue;
+                }
+            };
+            let last_activity = match chrono::DateTime::parse_from_rfc3339(&container.last_activity)
+            {
+                Ok(dt) => dt.with_timezone(&chrono::Utc),
+                Err(e) => {
+                    tracing::error!(
+                        "Container {} has invalid last_activity '{}': {} — skipping lifecycle check",
+                        container.id,
+                        container.last_activity,
+                        e
+                    );
+                    continue;
+                }
+            };
 
             let idle_duration = now.signed_duration_since(last_activity).num_seconds();
             let lifetime_duration = now.signed_duration_since(created_at).num_seconds();
@@ -54,7 +73,14 @@ impl LifecycleManager {
                 );
                 if let Some(docker_id) = &container.docker_id {
                     if let Some(dm) = &self.docker_manager {
-                        let _ = dm.stop_container(docker_id).await;
+                        if let Err(e) = dm.stop_container(docker_id).await {
+                            tracing::warn!(
+                                "Failed to stop idle container {} ({}): {}",
+                                container.id,
+                                docker_id,
+                                e
+                            );
+                        }
                     }
                 }
                 self.db
@@ -73,7 +99,14 @@ impl LifecycleManager {
                 );
                 if let Some(docker_id) = &container.docker_id {
                     if let Some(dm) = &self.docker_manager {
-                        let _ = dm.remove_container(docker_id).await;
+                        if let Err(e) = dm.remove_container(docker_id).await {
+                            tracing::warn!(
+                                "Failed to remove expired container {} ({}): {}",
+                                container.id,
+                                docker_id,
+                                e
+                            );
+                        }
                     }
                 }
                 self.db

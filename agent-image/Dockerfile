@@ -40,4 +40,6 @@ COPY --from=builder /app/target/release/sidecar /usr/local/bin/sidecar
 COPY agent-image/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
+EXPOSE 9000
+
 ENTRYPOINT ["/entrypoint.sh"]

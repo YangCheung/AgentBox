@@ -3,7 +3,8 @@ use std::sync::Arc;
 use axum::{
     extract::ws::{Message, WebSocket, WebSocketUpgrade},
     extract::{Path, State},
-    response::IntoResponse,
+    http::StatusCode,
+    response::{IntoResponse, Response},
 };
 use bollard::container::LogOutput;
 use bollard::query_parameters::LogsOptions;
@@ -11,18 +12,35 @@ use futures_util::{SinkExt, StreamExt};
 use tokio::sync::mpsc;
 
 use crate::docker::manager::DockerManager;
+use crate::redact::redact;
 use crate::AppState;
 
 pub async fn container_logs_ws(
     ws: WebSocketUpgrade,
     State(state): State<AppState>,
     Path(id): Path<String>,
-) -> impl IntoResponse {
-    let dm = state.docker_manager.clone().unwrap();
-    ws.on_upgrade(move |socket| handle_socket(socket, dm, id))
+) -> Response {
+    let dm = match state.docker_manager.clone() {
+        Some(dm) => dm,
+        None => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Docker not configured",
+            )
+                .into_response()
+        }
+    };
+    let secrets = state.log_secrets.clone();
+    ws.on_upgrade(move |socket| handle_socket(socket, dm, id, secrets))
+        .into_response()
 }
 
-async fn handle_socket(socket: WebSocket, docker_manager: Arc<DockerManager>, container_id: String) {
+async fn handle_socket(
+    socket: WebSocket,
+    docker_manager: Arc<DockerManager>,
+    container_id: String,
+    secrets: Arc<Vec<String>>,
+) {
     let docker_name = format!("agent-{}", container_id);
 
     let (mut sender, mut receiver) = socket.split();
@@ -39,32 +57,28 @@ async fn handle_socket(socket: WebSocket, docker_manager: Arc<DockerManager>, co
     };
 
     let log_tx = tx.clone();
+    let log_secrets = secrets.clone();
     let log_fut = tokio::spawn(async move {
         let mut stream = docker.logs(&docker_name, Some(options));
         while let Some(log_result) = stream.next().await {
             match log_result {
-                Ok(LogOutput::StdOut { message }) => {
-                    let _ = log_tx
-                        .send(String::from_utf8_lossy(&message).to_string())
-                        .await;
+                Ok(LogOutput::StdOut { message }) | Ok(LogOutput::StdErr { message }) => {
+                    let raw = String::from_utf8_lossy(&message).to_string();
+                    let safe = redact(&raw, &log_secrets);
+                    let _ = log_tx.send(safe).await;
                 }
-                Ok(LogOutput::StdErr { message }) => {
-                    let _ = log_tx
-                        .send(String::from_utf8_lossy(&message).to_string())
-                        .await;
+                Ok(_) => {}
+                Err(e) => {
+                    tracing::warn!("docker.logs stream error for {}: {}", docker_name, e);
+                    break;
                 }
-                _ => {}
             }
         }
     });
 
     let send_fut = tokio::spawn(async move {
         while let Some(line) = rx.recv().await {
-            if sender
-                .send(Message::Text(line.into()))
-                .await
-                .is_err()
-            {
+            if sender.send(Message::Text(line.into())).await.is_err() {
                 break;
             }
         }

@@ -12,32 +12,37 @@ AgentBox - 基于 Rust + Docker 的 AI Agent 运行沙箱平台。为 Claude Age
 ## 架构
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                   Control Plane (主服务)                 │
-│  REST API ─ Docker Manager ─ Lifecycle Manager ─ SQLite │
-└──────────────────────────┬──────────────────────────────┘
-                           │ Docker Socket
-                           ▼
-┌─────────────────────────────────────────────────────────┐
-│                  Agent Container                         │
-│  ┌─────────────┐  ┌──────────────────────────────────┐ │
-│  │ Sidecar     │  │ Claude Agent SDK                  │ │
-│  │ (状态回传)   │──│ (执行任务)                         │ │
-│  └─────────────┘  └──────────────────────────────────┘ │
-└─────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│                    Control Plane (主服务)                     │
+│  REST API ─ Auth ─ Docker Manager ─ Lifecycle ─ SQLite       │
+│                       │           │                           │
+│                       │           └─ WebSocket 日志流(脱敏)    │
+└───────────────────────┼───────────────────────────────────────┘
+                        │ Docker Socket
+                        ▼
+┌──────────────────────────────────────────────────────────────┐
+│                    Agent Container                            │
+│  ┌─────────────────────────────────────────────────────────┐ │
+│  │ Sidecar (Axum :9000)                                     │ │
+│  │  ├─ POST /query   → SSE 流式返回 cc_sdk::query 消息       │ │
+│  │  ├─ GET  /health                                         │ │
+│  │  └─ 心跳上报 → control-plane /api/containers/{id}/status  │ │
+│  └─────────────────────────────────────────────────────────┘ │
+└──────────────────────────────────────────────────────────────┘
 ```
 
 ### 核心组件
 
 | 组件 | 语言 | 职责 |
 |------|------|------|
-| **Control Plane** | Rust | 容器生命周期管理、REST API、空闲检测、自动销毁 |
-| **Sidecar** | Rust | 容器内服务，负责状态回传、日志收集、健康检查 |
-| **Agent Image** | Docker | 包含 Sidecar + Claude Agent SDK 的容器镜像 |
+| **Control Plane** | Rust | 容器生命周期管理、REST/WebSocket API、鉴权、CORS、日志脱敏、空闲销毁 |
+| **Sidecar** | Rust | 容器内 HTTP server（`:9000`）；封装 `cc-sdk::query`，SSE 流式返回 Claude 消息；状态/心跳回传 |
+| **Agent Image** | Docker | 包含 Sidecar 二进制 + Claude Code CLI（`@anthropic-ai/claude-code`）的容器镜像 |
 
 ### 技术栈
 
-- **Web 框架**：Axum 0.8
+- **Web 框架**：Axum 0.8（HTTP / WebSocket / SSE）
+- **Claude SDK**：cc-sdk 0.8（sidecar 内调用 Claude Code）
 - **Docker 客户端**：Bollard 0.21
 - **数据库**：SQLite (sqlx 0.8)
 - **异步运行时**：Tokio 1.x
@@ -168,6 +173,19 @@ DELETE /api/containers/{id}
 
 **响应** (204 No Content)
 
+### 容器日志流 (WebSocket)
+
+```http
+GET /api/containers/{id}/logs
+```
+
+WebSocket 端点，实时推送容器 stdout/stderr。已对启动时收集到的密钥值（`ANTHROPIC_API_KEY`、`API_KEY`、`OPENAI_API_KEY`、`GITHUB_TOKEN`、`GH_TOKEN`）做 `***REDACTED***` 替换。
+
+```bash
+wscat -H "Authorization: Bearer $API_KEY" \
+      -c ws://localhost:8080/api/containers/<id>/logs
+```
+
 ### 状态回传 (Sidecar → Control Plane)
 
 ```http
@@ -184,6 +202,89 @@ Content-Type: application/json
   "logs": ["Reading src/main.rs", "Checking imports"],
   "timestamp": "2026-05-28T10:24:00Z"
 }
+```
+
+## Sidecar API（容器内 `:9000`）
+
+由 control-plane 透传或在同一 Docker 网络下直连 `agent-{id}:9000`。
+
+### 健康检查
+
+```http
+GET /health        → 200 "ok"
+```
+
+### Query (SSE)
+
+```http
+POST /query
+Content-Type: application/json
+Accept: text/event-stream
+```
+
+**请求体**:
+```json
+{
+  "prompt": "重构这段代码",
+  "options": {
+    "model": "claude-opus-4-7",
+    "system_prompt": "你是 Rust 专家",
+    "max_turns": 5,
+    "allowed_tools": ["Read", "Edit"]
+  }
+}
+```
+
+`options` 字段（任意可选；未识别字段会被忽略）：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `model` | string | 主模型 |
+| `fallback_model` | string | 兜底模型 |
+| `system_prompt` | string | 系统提示词 |
+| `append_system_prompt` | string | 追加到默认系统提示词后 |
+| `max_turns` | i32 | 最大对话轮次 |
+| `max_output_tokens` | u32 | 输出 token 上限 |
+| `max_thinking_tokens` | i32 | thinking token 上限 |
+| `allowed_tools` | string[] | 允许的工具白名单 |
+| `disallowed_tools` | string[] | 禁用工具黑名单 |
+| `cwd` | string | 工作目录 |
+| `session_id` | string | 复用 session ID |
+| `resume` | string | 从指定 session 续跑 |
+| `continue_conversation` | bool | 继续上一次会话 |
+| `include_partial_messages` | bool | 是否推送增量消息 |
+| `max_budget_usd` | f64 | 单次预算上限 |
+
+需要更多字段在 `sidecar/src/query.rs::build_options` 加一行 builder 调用即可。
+
+**响应**: `Content-Type: text/event-stream`，每条 `cc_sdk::Message` 一个事件，类型即 event 名：
+
+```
+event: assistant
+data: {"type":"assistant","message":{...}}
+
+event: stream_event
+data: {"type":"stream_event","uuid":"...","event":{...}}
+
+event: result
+data: {"type":"result","duration_ms":1234,"total_cost_usd":0.0012,...}
+```
+
+| Event | 说明 |
+|-------|------|
+| `assistant` / `user` / `system` | 普通对话消息 |
+| `stream_event` | 流式增量（启用 `include_partial_messages` 时） |
+| `rate_limit` | 速率受限通知 |
+| `result` | 终止事件，附 duration / cost / usage |
+| `error` | 流中错误，随后流自然结束 |
+
+Keep-alive 间隔 15s。客户端按 SSE 标准断线重连即可。
+
+**curl 示例**:
+```bash
+curl -N -X POST http://agent-<id>:9000/query \
+  -H 'Content-Type: application/json' \
+  -d '{"prompt":"hello"}'
 ```
 
 ## 容器状态
@@ -206,17 +307,20 @@ Content-Type: application/json
 | `DATABASE_URL` | `sqlite:agent_sandbox.db?mode=rwc` | SQLite 数据库路径 |
 | `SERVER_ADDR` | `0.0.0.0:8080` | 监听地址 |
 | `AGENT_IMAGE` | `agent-sandbox:latest` | Agent 容器镜像 |
+| `API_KEY` | *(unset)* | 设置后所有非 `/health` 路由要求 `Authorization: Bearer <key>`；未设置则不鉴权（开发模式） |
+| `ALLOWED_ORIGINS` | localhost only | CORS 允许来源；逗号分隔；`*` 表示通配（会打 warning） |
+| `ANTHROPIC_API_KEY` | *(unset)* | 注入到所有 agent 容器；同时被收集用于日志流脱敏 |
 | `RUST_LOG` | `info` | 日志级别 |
 
 ### 环境变量 (Sidecar 容器)
 
-| 变量 | 说明 |
-|------|------|
-| `CONTAINER_ID` | 容器 ID (由 Control Plane 注入) |
-| `TASK` | 任务描述 |
-| `CONTROL_PLANE_URL` | Control Plane 地址 |
-| `SKILL_REPOS` | Skill 仓库地址 (逗号分隔) |
-| `ANTHROPIC_API_KEY` | Anthropic API Key |
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `CONTAINER_ID` | *(必填)* | 容器 ID（由 Control Plane 注入） |
+| `CONTROL_PLANE_URL` | `http://localhost:8080` | 心跳上报地址 |
+| `SIDECAR_ADDR` | `0.0.0.0:9000` | sidecar HTTP server 监听地址 |
+| `SKILL_REPOS` | *(可选)* | 启动时克隆到 `/workspace/skills/` 的 Git 仓库（逗号分隔） |
+| `ANTHROPIC_API_KEY` | *(可选)* | 由 cc-sdk 内部使用 |
 
 ## Skill 加载
 
@@ -255,33 +359,37 @@ description: 自动化代码审查工具
 ### 项目结构
 
 ```
-agent-sandbox/
+agentbox/
 ├── Cargo.toml                          # Workspace 配置
 ├── Dockerfile                          # Control Plane 镜像
 ├── docker-compose.yml                  # Docker 编排
 ├── control-plane/                      # 主服务
 │   ├── Cargo.toml
 │   └── src/
-│       ├── main.rs                     # 入口 + 路由
-│       ├── config.rs                   # 配置管理
+│       ├── main.rs                     # 入口 + 路由 + CORS 构造
+│       ├── config.rs                   # 配置加载（含 ALLOWED_ORIGINS）
+│       ├── auth.rs                     # Bearer token 中间件
+│       ├── redact.rs                   # 日志流密钥脱敏
 │       ├── error.rs                    # 错误类型
 │       ├── models/container.rs         # 数据模型
 │       ├── docker/
-│       │   ├── manager.rs              # Docker 操作
-│       │   └── lifecycle.rs            # 生命周期管理
+│       │   ├── manager.rs              # Docker 操作（Bollard）
+│       │   └── lifecycle.rs            # 生命周期巡检
 │       ├── db/sqlite.rs                # 数据库操作
 │       └── api/
-│           ├── containers.rs           # 容器 API
-│           └── health.rs              # 健康检查
+│           ├── containers.rs           # 容器 CRUD + 状态回调
+│           ├── ws.rs                   # WebSocket 日志流（含 redact）
+│           └── health.rs               # 健康检查
 ├── sidecar/                            # 容器内服务
-│   ├── Cargo.toml
+│   ├── Cargo.toml                      # 含 cc-sdk = "0.8"
 │   └── src/
-│       ├── main.rs                     # 入口
-│       ├── reporter.rs                 # 状态上报
-│       └── health.rs                   # 健康检查
+│       ├── main.rs                     # axum server :9000
+│       ├── query.rs                    # POST /query SSE handler（cc_sdk::query 封装）
+│       ├── reporter.rs                 # 状态/心跳上报
+│       └── health.rs                   # 后台心跳循环
 └── agent-image/                        # Agent 镜像
-    ├── Dockerfile
-    └── entrypoint.sh
+    ├── Dockerfile                      # sidecar + Claude CLI
+    └── entrypoint.sh                   # 克隆 skills 后 exec sidecar
 ```
 
 ### 运行测试
@@ -307,10 +415,14 @@ docker build -t agent-sandbox:latest -f agent-image/Dockerfile .
 
 ## 扩展方向
 
-- [ ] WebSocket 实时日志流
+- [x] WebSocket 实时日志流（含密钥脱敏）
+- [x] API 认证鉴权（API Key Bearer token）
+- [x] 收紧 CORS 默认值（localhost only，可配 `ALLOWED_ORIGINS`）
+- [x] Sidecar 接入 Claude SDK（cc-sdk 0.8，SSE 流式 query）
+- [ ] Control-plane 透传 sidecar 的 `/query` SSE（统一外部入口 + 鉴权 + 流量控制）
+- [ ] 容器列表/分页查询、历史日志（非实时）查询
 - [ ] 容器池/预热机制
 - [ ] Kubernetes 部署支持
-- [ ] API 认证鉴权 (JWT/API Key)
 - [ ] Prometheus 监控指标
 - [ ] 容器快照与恢复
 - [ ] 多节点调度

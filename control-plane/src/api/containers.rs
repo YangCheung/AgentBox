@@ -102,8 +102,23 @@ pub async fn delete_container(
 
     if let Some(docker_id) = &container.docker_id {
         if let Some(docker_manager) = &state.docker_manager {
-            let _ = docker_manager.stop_container(docker_id).await;
-            let _ = docker_manager.remove_container(docker_id).await;
+            if let Err(e) = docker_manager.stop_container(docker_id).await {
+                tracing::warn!(
+                    "stop_container({}) failed during delete of {}: {}",
+                    docker_id,
+                    id,
+                    e
+                );
+            }
+            if let Err(e) = docker_manager.remove_container(docker_id).await {
+                // 容器可能已被生命周期管理器清理；记录后继续删除 DB 记录
+                tracing::warn!(
+                    "remove_container({}) failed during delete of {}: {}",
+                    docker_id,
+                    id,
+                    e
+                );
+            }
         }
     }
 

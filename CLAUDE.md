@@ -43,24 +43,35 @@ The main REST API service (Axum 0.8) that manages Docker container lifecycles. C
   - `GET /api/containers/{id}` — get container metadata
   - `DELETE /api/containers/{id}` — stop + remove container + delete DB record
   - `POST /api/containers/{id}/status` — receive status reports from sidecar
-- **LifecycleManager** runs as a background task (30s tick), checking idle timeout and max lifetime for all active containers. When exceeded, it stops/removes the Docker container and marks it `Stopped` in the DB.
+  - `GET /api/containers/{id}/logs` — WebSocket stream of container stdout/stderr (with secret redaction)
+- **LifecycleManager** runs as a background task (30s tick), checking idle timeout and max lifetime for all active containers. When exceeded, it stops/removes the Docker container and marks it `Stopped` in the DB. Containers with unparseable timestamps are skipped (logged) rather than treated as 1970.
 - **Auth middleware** (`control-plane/src/auth.rs`) checks the `Authorization: Bearer <key>` header on all routes except `/health`. If `API_KEY` env var is not set, auth is skipped entirely (development mode).
+- **CORS** (`build_cors` in `main.rs`) defaults to localhost only. Set `ALLOWED_ORIGINS=https://a.com,https://b.com` to allow specific origins, or `ALLOWED_ORIGINS=*` for wildcard (logged as warning).
+- **Log redaction** (`control-plane/src/redact.rs`) collects values of known secret env vars (`ANTHROPIC_API_KEY`, `API_KEY`, `OPENAI_API_KEY`, `GITHUB_TOKEN`, `GH_TOKEN`) at startup and replaces them with `***REDACTED***` in the WebSocket log stream.
 
 ### Sidecar (`sidecar/`)
-Runs inside each agent container. Reports progress and heartbeat back to the control plane via HTTP POST to `/api/containers/{id}/status`. Currently simulates a task in 5 steps; in production this would invoke the Claude Agent SDK.
+Runs inside each agent container as an HTTP server (Axum 0.8) on `SIDECAR_ADDR` (default `0.0.0.0:9000`). Heartbeats to the control plane via `/api/containers/{id}/status`.
+
+- **Routes**:
+  - `GET /health` — returns `ok`
+  - `POST /query` — wraps `cc_sdk::query` (cc-sdk 0.8); streams `Message` variants back as Server-Sent Events
+- **Request body**: `{ "prompt": "...", "options": { ... } }`. The `options` object is mapped onto `ClaudeCodeOptions` via the builder; supported fields: `model`, `fallback_model`, `system_prompt`, `append_system_prompt`, `max_turns`, `max_output_tokens`, `max_thinking_tokens`, `allowed_tools`, `disallowed_tools`, `cwd`, `session_id`, `resume`, `continue_conversation`, `include_partial_messages`, `max_budget_usd`. Unknown fields are ignored. To support more, add a field to `QueryOptions` and a builder call in `build_options` (`sidecar/src/query.rs`).
+- **SSE event names**: `assistant`, `user`, `system`, `result`, `stream_event`, `rate_limit`, `error`. Each event's `data:` is the JSON-serialized `Message`. The stream ends naturally after `cc_sdk` finishes (typically after the `result` event). Keep-alive is 15s.
 
 ### Agent Image (`agent-image/`)
-Docker image for agent containers. Contains the sidecar binary. The entrypoint script (`entrypoint.sh`) starts the sidecar in background, then clones skill repos from `$SKILL_REPOS` (comma-separated Git URLs) into `/workspace/skills/`.
+Docker image for agent containers. Contains the sidecar binary and the `claude` CLI (installed via npm `@anthropic-ai/claude-code`). The entrypoint script (`entrypoint.sh`) clones skill repos from `$SKILL_REPOS` (comma-separated Git URLs) into `/workspace/skills/`, then execs the sidecar. Exposes port 9000.
 
 ## Key Data Flow
 
-1. User POSTs to `/api/containers` with task + skill repos + resource limits
-2. Control plane generates a UUID, creates a Docker container named `agent-{uuid}`, injects env vars (TASK, CONTAINER_ID, CONTROL_PLANE_URL, SKILL_REPOS)
-3. Sidecar starts inside the container, reports status back to control plane
-4. LifecycleManager periodically sweeps active containers, stopping idle/expired ones
+1. Caller POSTs to `/api/containers` with task + skill repos + resource limits
+2. Control plane generates a UUID, creates a Docker container named `agent-{uuid}`, injects env vars (`TASK`, `CONTAINER_ID`, `CONTROL_PLANE_URL`, `SKILL_REPOS`, `ANTHROPIC_API_KEY`)
+3. Container starts → entrypoint clones skills → execs sidecar
+4. Sidecar listens on `:9000` and sends initial `running/ready` status; heartbeats every 30s
+5. Caller (or control-plane proxy, future) POSTs to sidecar's `/query` with a prompt; SSE stream returns `cc_sdk` messages until `result`
+6. LifecycleManager periodically sweeps active containers, stopping idle ones and destroying expired ones
 
 ## Environment Variables
 
-**Control Plane**: `DATABASE_URL` (default `sqlite:agent_sandbox.db?mode=rwc`), `SERVER_ADDR` (default `0.0.0.0:8080`), `AGENT_IMAGE` (default `agent-sandbox:latest`), `API_KEY` (optional; if set, all non-/health routes require `Authorization: Bearer <key>`), `RUST_LOG` (default `info`)
+**Control Plane**: `DATABASE_URL` (default `sqlite:agent_sandbox.db?mode=rwc`), `SERVER_ADDR` (default `0.0.0.0:8080`), `AGENT_IMAGE` (default `agent-sandbox:latest`), `API_KEY` (optional; if set, all non-/health routes require `Authorization: Bearer <key>`), `ALLOWED_ORIGINS` (comma-separated; default localhost only; `*` for wildcard), `ANTHROPIC_API_KEY` (forwarded into agent containers and redacted from log streams), `RUST_LOG` (default `info`)
 
-**Sidecar/Container**: `CONTAINER_ID` (required), `TASK`, `CONTROL_PLANE_URL`, `SKILL_REPOS`, `ANTHROPIC_API_KEY`
+**Sidecar/Container**: `CONTAINER_ID` (required), `CONTROL_PLANE_URL` (for heartbeats), `SIDECAR_ADDR` (default `0.0.0.0:9000`), `SKILL_REPOS`, `ANTHROPIC_API_KEY`, `TASK` (legacy; not consumed by sidecar after the cc-sdk migration — query is now request-driven)
