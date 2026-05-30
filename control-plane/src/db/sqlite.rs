@@ -2,6 +2,7 @@ use sqlx::sqlite::{SqlitePool, SqlitePoolOptions};
 
 use crate::error::AppError;
 use crate::models::container::Container;
+use crate::models::skill::Skill;
 
 #[derive(Clone)]
 pub struct Database {
@@ -24,6 +25,7 @@ impl Database {
                 status TEXT NOT NULL,
                 docker_id TEXT,
                 skill_repos TEXT NOT NULL DEFAULT '[]',
+                skill_ids TEXT NOT NULL DEFAULT '[]',
                 cpu_limit TEXT NOT NULL DEFAULT '2',
                 memory_limit TEXT NOT NULL DEFAULT '4Gi',
                 idle_timeout INTEGER NOT NULL DEFAULT 300,
@@ -37,14 +39,34 @@ impl Database {
         .await
         .map_err(|e| AppError::DatabaseError(e.to_string()))?;
 
+        // Migration: add skill_ids column to existing containers table
+        let _ = sqlx::query("ALTER TABLE containers ADD COLUMN skill_ids TEXT NOT NULL DEFAULT '[]'")
+            .execute(&pool)
+            .await;
+
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS skills (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL UNIQUE,
+                description TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
         Ok(Self { pool })
     }
 
     pub async fn create_container(&self, container: &Container) -> Result<(), AppError> {
         sqlx::query(
             r#"
-            INSERT INTO containers (id, task, status, docker_id, skill_repos, cpu_limit, memory_limit, idle_timeout, max_lifetime, created_at, last_activity)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO containers (id, task, status, docker_id, skill_repos, skill_ids, cpu_limit, memory_limit, idle_timeout, max_lifetime, created_at, last_activity)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&container.id)
@@ -52,6 +74,7 @@ impl Database {
         .bind(&container.status)
         .bind(&container.docker_id)
         .bind(&container.skill_repos)
+        .bind(&container.skill_ids)
         .bind(&container.cpu_limit)
         .bind(&container.memory_limit)
         .bind(container.idle_timeout)
@@ -67,7 +90,7 @@ impl Database {
 
     pub async fn get_container(&self, id: &str) -> Result<Container, AppError> {
         sqlx::query_as::<_, Container>(
-            "SELECT id, task, status, docker_id, skill_repos, cpu_limit, memory_limit, idle_timeout, max_lifetime, created_at, last_activity FROM containers WHERE id = ?"
+            "SELECT id, task, status, docker_id, skill_repos, skill_ids, cpu_limit, memory_limit, idle_timeout, max_lifetime, created_at, last_activity FROM containers WHERE id = ?"
         )
         .bind(id)
         .fetch_one(&self.pool)
@@ -98,7 +121,7 @@ impl Database {
 
     pub async fn list_active_containers(&self) -> Result<Vec<Container>, AppError> {
         sqlx::query_as::<_, Container>(
-            "SELECT id, task, status, docker_id, skill_repos, cpu_limit, memory_limit, idle_timeout, max_lifetime, created_at, last_activity FROM containers WHERE status IN ('Running', 'Idle')"
+            "SELECT id, task, status, docker_id, skill_repos, skill_ids, cpu_limit, memory_limit, idle_timeout, max_lifetime, created_at, last_activity FROM containers WHERE status IN ('Running', 'Idle')"
         )
         .fetch_all(&self.pool)
         .await
@@ -165,7 +188,7 @@ impl Database {
         let limit_clause = format!("LIMIT ? OFFSET ?");
 
         let data_query = format!(
-            "SELECT id, task, status, docker_id, skill_repos, cpu_limit, memory_limit, \
+            "SELECT id, task, status, docker_id, skill_repos, skill_ids, cpu_limit, memory_limit, \
              idle_timeout, max_lifetime, created_at, last_activity \
              FROM containers {} {} {}",
             where_clause, order_clause, limit_clause
@@ -220,6 +243,162 @@ impl Database {
 
         Ok(crate::models::container::StatsResponse { total, by_status })
     }
+
+    // ---- Skill CRUD ----
+
+    pub async fn create_skill(&self, skill: &Skill) -> Result<(), AppError> {
+        sqlx::query(
+            r#"
+            INSERT INTO skills (id, name, description, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(&skill.id)
+        .bind(&skill.name)
+        .bind(&skill.description)
+        .bind(&skill.created_at)
+        .bind(&skill.updated_at)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+        Ok(())
+    }
+
+    pub async fn get_skill(&self, id: &str) -> Result<Skill, AppError> {
+        sqlx::query_as::<_, Skill>(
+            "SELECT id, name, description, created_at, updated_at FROM skills WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| AppError::DatabaseError(e.to_string()))
+    }
+
+    pub async fn get_skill_by_name(&self, name: &str) -> Result<Skill, AppError> {
+        sqlx::query_as::<_, Skill>(
+            "SELECT id, name, description, created_at, updated_at FROM skills WHERE name = ?",
+        )
+        .bind(name)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| AppError::DatabaseError(e.to_string()))
+    }
+
+    pub async fn update_skill(
+        &self,
+        id: &str,
+        name: Option<&str>,
+        description: Option<&str>,
+    ) -> Result<(), AppError> {
+        let now = chrono::Utc::now().to_rfc3339();
+        let mut sets = vec!["updated_at = ?".to_string()];
+        let mut values: Vec<String> = vec![now];
+
+        if let Some(n) = name {
+            sets.push("name = ?".to_string());
+            values.push(n.to_string());
+        }
+        if let Some(d) = description {
+            sets.push("description = ?".to_string());
+            values.push(d.to_string());
+        }
+
+        let query = format!("UPDATE skills SET {} WHERE id = ?", sets.join(", "));
+        let mut builder = sqlx::query(&query);
+        for v in &values {
+            builder = builder.bind(v);
+        }
+        builder = builder.bind(id);
+        builder
+            .execute(&self.pool)
+            .await
+            .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+        Ok(())
+    }
+
+    pub async fn delete_skill(&self, id: &str) -> Result<(), AppError> {
+        sqlx::query("DELETE FROM skills WHERE id = ?")
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+        Ok(())
+    }
+
+    pub async fn list_skills(
+        &self,
+        search: Option<&str>,
+        page: i64,
+        per_page: i64,
+    ) -> Result<(Vec<Skill>, i64), AppError> {
+        let per_page = per_page.min(100).max(1);
+        let page = page.max(1);
+        let offset = (page - 1) * per_page;
+
+        let mut conditions: Vec<String> = Vec::new();
+        let mut binds: Vec<String> = Vec::new();
+
+        if let Some(s) = search {
+            if !s.is_empty() {
+                let term = format!("%{}%", s);
+                conditions.push("(name LIKE ? OR description LIKE ?)".to_string());
+                binds.push(term.clone());
+                binds.push(term);
+            }
+        }
+
+        let where_clause = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", conditions.join(" AND "))
+        };
+
+        let data_query = format!(
+            "SELECT id, name, description, created_at, updated_at FROM skills {} ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            where_clause
+        );
+        let count_query = format!("SELECT COUNT(*) FROM skills {}", where_clause);
+
+        let mut data_builder = sqlx::query_as::<_, Skill>(&data_query);
+        let mut count_builder = sqlx::query_scalar::<_, i64>(&count_query);
+
+        for bind_val in &binds {
+            data_builder = data_builder.bind(bind_val);
+            count_builder = count_builder.bind(bind_val);
+        }
+        data_builder = data_builder.bind(per_page).bind(offset);
+
+        let data = data_builder
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+        let total = count_builder
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| AppError::DatabaseError(e.to_string()))?;
+
+        Ok((data, total))
+    }
+
+    pub async fn get_skills_by_ids(&self, ids: &[String]) -> Result<Vec<Skill>, AppError> {
+        if ids.is_empty() {
+            return Ok(vec![]);
+        }
+        let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let query = format!(
+            "SELECT id, name, description, created_at, updated_at FROM skills WHERE id IN ({})",
+            placeholders
+        );
+        let mut builder = sqlx::query_as::<_, Skill>(&query);
+        for id in ids {
+            builder = builder.bind(id);
+        }
+        builder
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|e| AppError::DatabaseError(e.to_string()))
+    }
 }
 
 #[cfg(test)]
@@ -238,6 +417,7 @@ mod tests {
             status: "Running".to_string(),
             docker_id: Some("test-docker-id".to_string()),
             skill_repos: "[]".to_string(),
+            skill_ids: "[]".to_string(),
             cpu_limit: "1".to_string(),
             memory_limit: "1Gi".to_string(),
             idle_timeout: 300,
@@ -283,6 +463,7 @@ mod tests {
             status: "Running".to_string(),
             docker_id: None,
             skill_repos: "[]".to_string(),
+            skill_ids: "[]".to_string(),
             cpu_limit: "1".to_string(),
             memory_limit: "1Gi".to_string(),
             idle_timeout: 300,
@@ -298,6 +479,7 @@ mod tests {
             status: "Stopped".to_string(),
             docker_id: None,
             skill_repos: "[]".to_string(),
+            skill_ids: "[]".to_string(),
             cpu_limit: "1".to_string(),
             memory_limit: "1Gi".to_string(),
             idle_timeout: 300,
@@ -361,6 +543,7 @@ mod tests {
             status: "Running".to_string(),
             docker_id: None,
             skill_repos: "[]".to_string(),
+            skill_ids: "[]".to_string(),
             cpu_limit: "1".to_string(),
             memory_limit: "1Gi".to_string(),
             idle_timeout: 300,
@@ -394,6 +577,7 @@ mod tests {
             status: "Running".to_string(),
             docker_id: None,
             skill_repos: "[]".to_string(),
+            skill_ids: "[]".to_string(),
             cpu_limit: "1".to_string(),
             memory_limit: "1Gi".to_string(),
             idle_timeout: 300,
@@ -427,6 +611,7 @@ mod tests {
                 status: "Running".to_string(),
                 docker_id: None,
                 skill_repos: "[]".to_string(),
+                skill_ids: "[]".to_string(),
                 cpu_limit: "1".to_string(),
                 memory_limit: "1Gi".to_string(),
                 idle_timeout: 300,
@@ -456,6 +641,7 @@ mod tests {
             status: "Running".to_string(),
             docker_id: None,
             skill_repos: "[]".to_string(),
+            skill_ids: "[]".to_string(),
             cpu_limit: "1".to_string(),
             memory_limit: "1Gi".to_string(),
             idle_timeout: 300,
@@ -475,5 +661,115 @@ mod tests {
         assert_eq!(stats.total, 2);
         assert_eq!(stats.by_status.get("Running"), Some(&1));
         assert_eq!(stats.by_status.get("Stopped"), Some(&1));
+    }
+
+    // ---- Skill tests ----
+
+    fn test_skill(id: &str, name: &str) -> Skill {
+        let now = chrono::Utc::now().to_rfc3339();
+        Skill {
+            id: id.to_string(),
+            name: name.to_string(),
+            description: "test skill".to_string(),
+            created_at: now.clone(),
+            updated_at: now,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_create_and_get_skill() {
+        let db = test_db().await;
+        let skill = test_skill("sk-1", "code-review");
+
+        db.create_skill(&skill).await.unwrap();
+        let fetched = db.get_skill("sk-1").await.unwrap();
+
+        assert_eq!(fetched.id, "sk-1");
+        assert_eq!(fetched.name, "code-review");
+        assert_eq!(fetched.description, "test skill");
+    }
+
+    #[tokio::test]
+    async fn test_get_skill_by_name() {
+        let db = test_db().await;
+        let skill = test_skill("sk-2", "my-skill");
+
+        db.create_skill(&skill).await.unwrap();
+        let fetched = db.get_skill_by_name("my-skill").await.unwrap();
+
+        assert_eq!(fetched.id, "sk-2");
+    }
+
+    #[tokio::test]
+    async fn test_update_skill() {
+        let db = test_db().await;
+        let skill = test_skill("sk-3", "old-name");
+
+        db.create_skill(&skill).await.unwrap();
+        db.update_skill("sk-3", Some("new-name"), Some("new desc"))
+            .await
+            .unwrap();
+
+        let fetched = db.get_skill("sk-3").await.unwrap();
+        assert_eq!(fetched.name, "new-name");
+        assert_eq!(fetched.description, "new desc");
+    }
+
+    #[tokio::test]
+    async fn test_delete_skill() {
+        let db = test_db().await;
+        let skill = test_skill("sk-4", "to-delete");
+
+        db.create_skill(&skill).await.unwrap();
+        db.delete_skill("sk-4").await.unwrap();
+
+        let result = db.get_skill("sk-4").await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_list_skills() {
+        let db = test_db().await;
+        for i in 0..5 {
+            let skill = test_skill(&format!("sk-list-{}", i), &format!("skill-{}", i));
+            db.create_skill(&skill).await.unwrap();
+        }
+
+        let (data, total) = db.list_skills(None, 1, 20).await.unwrap();
+        assert_eq!(total, 5);
+        assert_eq!(data.len(), 5);
+    }
+
+    #[tokio::test]
+    async fn test_list_skills_search() {
+        let db = test_db().await;
+        db.create_skill(&test_skill("sk-s1", "code-review"))
+            .await
+            .unwrap();
+        db.create_skill(&test_skill("sk-s2", "test-gen"))
+            .await
+            .unwrap();
+
+        let (_, total) = db.list_skills(Some("code"), 1, 20).await.unwrap();
+        assert_eq!(total, 1);
+
+        let (_, total) = db.list_skills(Some("nonexistent"), 1, 20).await.unwrap();
+        assert_eq!(total, 0);
+    }
+
+    #[tokio::test]
+    async fn test_get_skills_by_ids() {
+        let db = test_db().await;
+        db.create_skill(&test_skill("sk-b1", "a")).await.unwrap();
+        db.create_skill(&test_skill("sk-b2", "b")).await.unwrap();
+        db.create_skill(&test_skill("sk-b3", "c")).await.unwrap();
+
+        let skills = db
+            .get_skills_by_ids(&["sk-b1".to_string(), "sk-b3".to_string()])
+            .await
+            .unwrap();
+        assert_eq!(skills.len(), 2);
+        assert!(skills.iter().any(|s| s.id == "sk-b1"));
+        assert!(skills.iter().any(|s| s.id == "sk-b3"));
     }
 }

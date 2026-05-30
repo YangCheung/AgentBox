@@ -6,6 +6,9 @@ import { DashboardPage } from '@/pages/dashboard'
 import { ContainerListPage } from '@/pages/container-list'
 import { CreateContainerPage } from '@/pages/container-create'
 import { ContainerDetailPage } from '@/pages/container-detail'
+import { SkillListPage } from '@/pages/skill-list'
+import { SkillCreatePage } from '@/pages/skill-create'
+import { SkillEditPage } from '@/pages/skill-edit'
 
 function ProtectedRoute() {
   const { isAuthenticated } = useAuth()
@@ -30,6 +33,9 @@ export const router = createBrowserRouter([
           { path: '/containers', element: <ContainerListPage /> },
           { path: '/containers/new', element: <CreateContainerPage /> },
           { path: '/containers/:id', element: <ContainerDetailPage /> },
+          { path: '/skills', element: <SkillListPage /> },
+          { path: '/skills/new', element: <SkillCreatePage /> },
+          { path: '/skills/:id/edit', element: <SkillEditPage /> },
         ],
       },
     ],

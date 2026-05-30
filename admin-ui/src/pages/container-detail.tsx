@@ -2,6 +2,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { ArrowLeft, RefreshCw, Trash2 } from 'lucide-react'
 import { useContainer, useDeleteContainer } from '@/hooks/use-containers'
+import { useAllSkills } from '@/hooks/use-skills'
 import { Header } from '@/components/layout/header'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -16,6 +17,7 @@ export function ContainerDetailPage() {
   const navigate = useNavigate()
   const { data: container, isLoading, isError } = useContainer(id)
   const deleteMutation = useDeleteContainer()
+  const { data: allSkills } = useAllSkills()
 
   const handleDelete = () => {
     if (id) {
@@ -58,6 +60,18 @@ export function ContainerDetailPage() {
       return []
     }
   })()
+
+  const skillIds: string[] = (() => {
+    try {
+      return JSON.parse(container.skill_ids)
+    } catch {
+      return []
+    }
+  })()
+
+  const skillNames = skillIds
+    .map((id) => allSkills?.data.find((s) => s.id === id)?.name)
+    .filter(Boolean) as string[]
 
   return (
     <div>
@@ -125,6 +139,12 @@ export function ContainerDetailPage() {
                 <dt className="w-28 text-muted-foreground">{t('Max Lifetime')}</dt>
                 <dd>{container.max_lifetime}s</dd>
               </div>
+              {skillNames.length > 0 && (
+                <div className="flex gap-2">
+                  <dt className="w-28 text-muted-foreground">{t('Skills')}</dt>
+                  <dd>{skillNames.join(', ')}</dd>
+                </div>
+              )}
               {repos.length > 0 && (
                 <div className="flex gap-2">
                   <dt className="w-28 text-muted-foreground">{t('Skill Repos')}</dt>

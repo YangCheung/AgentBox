@@ -1,6 +1,6 @@
 import { NavLink } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
-import { LayoutDashboard, Container, LogOut } from 'lucide-react'
+import { LayoutDashboard, Container, Wrench, LogOut } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/context/auth-context'
 import { Button } from '@/components/ui/button'
@@ -9,6 +9,7 @@ import { LanguageSwitcher } from './language-switcher'
 const links = [
   { to: '/', labelKey: 'Dashboard', icon: LayoutDashboard },
   { to: '/containers', labelKey: 'Containers', icon: Container },
+  { to: '/skills', labelKey: 'Skills', icon: Wrench },
 ]
 
 export function Sidebar() {

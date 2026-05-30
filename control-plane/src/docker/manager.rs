@@ -85,6 +85,94 @@ impl DockerManager {
             Err(_) => false,
         }
     }
+
+    /// Copy a local directory into a running container at the specified path.
+    /// Builds a tar archive and pipes it into the container via `tar -xf -`.
+    pub async fn copy_to_container(
+        &self,
+        container_name: &str,
+        src_dir: &str,
+        dest_path: &str,
+    ) -> Result<(), AppError> {
+        use bollard::exec::{CreateExecOptions, StartExecOptions};
+        use futures_util::StreamExt;
+        use tokio::io::AsyncWriteExt;
+
+        let src_dir = src_dir.to_string();
+        let dest_path = dest_path.to_string();
+
+        // Build tar archive in a blocking task
+        let tar_bytes = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, AppError> {
+            let mut buf = Vec::new();
+            {
+                let mut builder = tar::Builder::new(&mut buf);
+                builder
+                    .append_dir_all(".", &src_dir)
+                    .map_err(|e| AppError::DockerError(format!("tar build error: {}", e)))?;
+                builder
+                    .finish()
+                    .map_err(|e| AppError::DockerError(format!("tar finish error: {}", e)))?;
+            }
+            Ok(buf)
+        })
+        .await
+        .map_err(|e| AppError::DockerError(format!("task join error: {}", e)))?
+        .map_err(|e| AppError::DockerError(format!("tar error: {}", e)))?;
+
+        // Create exec with stdin attached: mkdir -p + tar extraction
+        let tar_cmd = format!("mkdir -p '{}' && tar -xf - -C '{}'", dest_path, dest_path);
+        let cmd = vec!["sh", "-c", &tar_cmd];
+
+        let exec = self
+            .docker
+            .create_exec(
+                container_name,
+                CreateExecOptions {
+                    cmd: Some(cmd),
+                    attach_stdin: Some(true),
+                    attach_stdout: Some(true),
+                    attach_stderr: Some(true),
+                    ..Default::default()
+                },
+            )
+            .await
+            .map_err(|e| AppError::DockerError(format!("create exec error: {}", e)))?;
+
+        match self
+            .docker
+            .start_exec(&exec.id, Some(StartExecOptions { detach: false, tty: false, ..Default::default() }))
+            .await
+            .map_err(|e| AppError::DockerError(format!("start exec error: {}", e)))?
+        {
+            bollard::exec::StartExecResults::Attached {
+                mut output,
+                mut input,
+            } => {
+                // Write tar bytes to stdin
+                input
+                    .write_all(&tar_bytes)
+                    .await
+                    .map_err(|e| AppError::DockerError(format!("write tar to exec error: {}", e)))?;
+                // Close stdin to signal EOF
+                input
+                    .shutdown()
+                    .await
+                    .map_err(|e| AppError::DockerError(format!("close stdin error: {}", e)))?;
+
+                // Drain output to wait for completion
+                while let Some(chunk) = output.next().await {
+                    if let Err(e) = chunk {
+                        tracing::warn!("exec output error: {}", e);
+                    }
+                }
+            }
+            bollard::exec::StartExecResults::Detached => {
+                return Err(AppError::DockerError("exec unexpectedly detached".to_string()));
+            }
+        }
+
+        Ok(())
+    }
 }
 
 fn parse_memory(s: &str) -> i64 {

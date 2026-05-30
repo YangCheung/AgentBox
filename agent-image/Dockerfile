@@ -34,6 +34,7 @@ RUN npm install -g @anthropic-ai/claude-code \
     && npm cache clean --force
 
 WORKDIR /workspace
+RUN mkdir -p /workspace/skills
 
 COPY --from=builder /app/target/release/sidecar /usr/local/bin/sidecar
 

@@ -4,6 +4,7 @@ export interface Container {
   status: string
   docker_id: string | null
   skill_repos: string
+  skill_ids: string
   cpu_limit: string
   memory_limit: string
   idle_timeout: number
@@ -24,6 +25,7 @@ export interface ContainerResponse {
 export interface CreateContainerRequest {
   task: string
   skill_repos?: string[]
+  skill_ids?: string[]
   skill_branch?: string
   cpu_limit?: string
   memory_limit?: string
@@ -43,4 +45,17 @@ export interface PaginatedResponse<T> {
 export interface StatsResponse {
   total: number
   by_status: Record<string, number>
+}
+
+export interface Skill {
+  id: string
+  name: string
+  description: string
+  created_at: string
+  updated_at: string
+}
+
+export interface UpdateSkillRequest {
+  name?: string
+  description?: string
 }

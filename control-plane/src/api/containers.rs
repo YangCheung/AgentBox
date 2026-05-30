@@ -9,6 +9,8 @@ use crate::error::AppError;
 use crate::models::container::*;
 use crate::AppState;
 
+use crate::models::skill::Skill;
+
 pub async fn create_container(
     State(state): State<AppState>,
     Json(payload): Json<CreateContainerRequest>,
@@ -19,6 +21,23 @@ pub async fn create_container(
     let skill_repos = payload.skill_repos.unwrap_or_default();
     let skill_repos_json =
         serde_json::to_string(&skill_repos).unwrap_or_else(|_| "[]".to_string());
+
+    // Resolve skill_ids to actual skills
+    let skill_ids = payload.skill_ids.unwrap_or_default();
+    let skills: Vec<Skill> = if !skill_ids.is_empty() {
+        state.db.get_skills_by_ids(&skill_ids).await?
+    } else {
+        vec![]
+    };
+    // Validate all requested skill_ids were found
+    if skills.len() != skill_ids.len() {
+        let found_ids: Vec<String> = skills.iter().map(|s| s.id.clone()).collect();
+        let missing: Vec<&String> = skill_ids.iter().filter(|id| !found_ids.contains(id)).collect();
+        return Err(AppError::BadRequest(format!(
+            "Skills not found: {}",
+            missing.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
+        )));
+    }
 
     let mut env_vars = vec![
         format!("TASK={}", payload.task),
@@ -60,6 +79,23 @@ pub async fn create_container(
         )
         .await?;
 
+    // Copy skills into the container
+    for skill in &skills {
+        let src_dir = format!("{}/{}", state.config.skills_dir, skill.id);
+        let dest_path = format!("/workspace/skills/{}", skill.name);
+        if let Err(e) = docker_manager
+            .copy_to_container(&docker_name, &src_dir, &dest_path)
+            .await
+        {
+            tracing::warn!(
+                "Failed to copy skill {} to container {}: {}",
+                skill.name,
+                docker_name,
+                e
+            );
+        }
+    }
+
     let now = Utc::now().to_rfc3339();
     let container = Container {
         id: container_id.clone(),
@@ -67,6 +103,7 @@ pub async fn create_container(
         status: "Running".to_string(),
         docker_id: Some(docker_id),
         skill_repos: skill_repos_json,
+        skill_ids: serde_json::to_string(&skill_ids).unwrap_or_else(|_| "[]".to_string()),
         cpu_limit,
         memory_limit,
         idle_timeout: payload.idle_timeout.unwrap_or(300),

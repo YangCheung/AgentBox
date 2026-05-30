@@ -12,7 +12,7 @@ use std::sync::Arc;
 use axum::{
     http::{HeaderValue, Method},
     middleware,
-    routing::{delete, get, post},
+    routing::{delete, get, post, put},
     Router,
 };
 use tower_http::cors::CorsLayer;
@@ -93,6 +93,16 @@ async fn main() {
             post(api::containers::report_status),
         )
         .route("/api/stats", get(api::containers::get_stats))
+        .route(
+            "/api/skills",
+            get(api::skills::list_skills).post(api::skills::create_skill),
+        )
+        .route(
+            "/api/skills/{id}",
+            get(api::skills::get_skill)
+                .put(api::skills::update_skill)
+                .delete(api::skills::delete_skill),
+        )
         .route(
             "/api/containers/{id}/logs",
             get(api::ws::container_logs_ws),

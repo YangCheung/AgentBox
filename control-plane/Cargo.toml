@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-axum = { version = "0.8", features = ["ws"] }
+axum = { version = "0.8", features = ["ws", "multipart"] }
 futures-util = "0.3"
 bollard = { version = "0.21" }
 tokio = { version = "1", features = ["full"] }
@@ -17,6 +17,11 @@ uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
 reqwest = { version = "0.12", features = ["json"] }
 tower-http = { version = "0.6", features = ["cors"] }
+zip = "2"
+tar = "0.4"
+serde_yaml = "0.9"
+bytes = "1"
+tokio-util = { version = "0.7", features = ["io"] }
 
 [dev-dependencies]
 http = "1"

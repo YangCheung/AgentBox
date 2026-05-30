@@ -67,6 +67,7 @@ mod tests {
                 agent_image: String::new(),
                 api_key: api_key.map(String::from),
                 allowed_origins: Vec::new(),
+                skills_dir: "/tmp/skills".to_string(),
             },
             log_secrets: std::sync::Arc::new(Vec::new()),
         }

@@ -29,7 +29,7 @@ export function useContainerLogs(containerId: string | undefined) {
     ws.onclose = () => {
       setIsConnected(false)
       wsRef.current = null
-      reconnectTimer.current = setTimeout(() => {
+      reconnectTimer.current = window.setTimeout(() => {
         reconnectDelay.current = Math.min(reconnectDelay.current * 2, 30000)
         connect()
       }, reconnectDelay.current)

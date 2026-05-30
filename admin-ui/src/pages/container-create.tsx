@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { Plus, Trash2 } from 'lucide-react'
 import { useCreateContainer } from '@/hooks/use-containers'
+import { useAllSkills } from '@/hooks/use-skills'
 import { Header } from '@/components/layout/header'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -14,8 +15,10 @@ export function CreateContainerPage() {
   const { t } = useTranslation()
   const navigate = useNavigate()
   const mutation = useCreateContainer()
+  const { data: allSkills } = useAllSkills()
 
   const [task, setTask] = useState('')
+  const [selectedSkillIds, setSelectedSkillIds] = useState<string[]>([])
   const [skillRepos, setSkillRepos] = useState<string[]>([])
   const [skillBranch, setSkillBranch] = useState('main')
   const [cpuLimit, setCpuLimit] = useState('2')
@@ -25,6 +28,12 @@ export function CreateContainerPage() {
   const [envKeys, setEnvKeys] = useState<string[]>([])
   const [envValues, setEnvValues] = useState<string[]>([])
   const [error, setError] = useState('')
+
+  const toggleSkill = (id: string) => {
+    setSelectedSkillIds((prev) =>
+      prev.includes(id) ? prev.filter((s) => s !== id) : [...prev, id],
+    )
+  }
 
   const addSkillRepo = () => setSkillRepos([...skillRepos, ''])
   const removeSkillRepo = (i: number) => {
@@ -62,6 +71,7 @@ export function CreateContainerPage() {
     mutation.mutate(
       {
         task: task.trim(),
+        skill_ids: selectedSkillIds.length > 0 ? selectedSkillIds : undefined,
         skill_repos: repos.length > 0 ? repos : undefined,
         skill_branch: skillBranch || undefined,
         cpu_limit: cpuLimit || undefined,
@@ -94,6 +104,33 @@ export function CreateContainerPage() {
                   rows={3}
                 />
               </div>
+
+              {allSkills && allSkills.data.length > 0 && (
+                <div className="space-y-2">
+                  <Label>{t('Skills')}</Label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {allSkills.data.map((skill) => (
+                      <label
+                        key={skill.id}
+                        className="flex items-start gap-2 rounded-md border p-3 text-sm cursor-pointer hover:bg-accent"
+                      >
+                        <input
+                          type="checkbox"
+                          className="mt-0.5"
+                          checked={selectedSkillIds.includes(skill.id)}
+                          onChange={() => toggleSkill(skill.id)}
+                        />
+                        <div>
+                          <p className="font-medium">{skill.name}</p>
+                          {skill.description && (
+                            <p className="text-xs text-muted-foreground">{skill.description}</p>
+                          )}
+                        </div>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               <div className="space-y-2">
                 <Label>{t('Skill Repos')}</Label>

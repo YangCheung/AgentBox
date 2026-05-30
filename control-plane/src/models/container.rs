@@ -45,6 +45,7 @@ pub struct Container {
     pub status: String,
     pub docker_id: Option<String>,
     pub skill_repos: String,
+    pub skill_ids: String,
     pub cpu_limit: String,
     pub memory_limit: String,
     pub idle_timeout: i64,
@@ -67,6 +68,7 @@ impl Container {
 pub struct CreateContainerRequest {
     pub task: String,
     pub skill_repos: Option<Vec<String>>,
+    pub skill_ids: Option<Vec<String>>,
     pub skill_branch: Option<String>,
     pub cpu_limit: Option<String>,
     pub memory_limit: Option<String>,
