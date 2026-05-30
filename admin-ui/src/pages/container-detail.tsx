@@ -1,15 +1,21 @@
 import { useParams, useNavigate } from 'react-router-dom'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { ArrowLeft, RefreshCw, Trash2 } from 'lucide-react'
+import { ArrowLeft, RefreshCw, Trash2, Send, X, ChevronDown, ChevronUp } from 'lucide-react'
 import { useContainer, useDeleteContainer } from '@/hooks/use-containers'
+import { useContainerQuery } from '@/hooks/use-container-query'
 import { useToast } from '@/context/toast-context'
 import { Header } from '@/components/layout/header'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
+import { Badge } from '@/components/ui/badge'
 import { StatusBadge } from '@/components/containers/status-badge'
 import { LogViewer } from '@/components/logs/log-viewer'
 import { Skeleton } from '@/components/ui/skeleton'
 import { formatDate } from '@/lib/utils'
+import type { QueryOptions } from '@/lib/types'
 
 export function ContainerDetailPage() {
   const { t } = useTranslation()
@@ -18,6 +24,25 @@ export function ContainerDetailPage() {
   const { data: container, isLoading, isError } = useContainer(id)
   const deleteMutation = useDeleteContainer()
   const toast = useToast()
+
+  // Query state
+  const query = useContainerQuery(id)
+  const [prompt, setPrompt] = useState('')
+  const [showAdvanced, setShowAdvanced] = useState(false)
+  const [model, setModel] = useState('')
+  const [maxTurns, setMaxTurns] = useState('')
+
+  const buildOptions = (): QueryOptions | undefined => {
+    const opts: QueryOptions = {}
+    if (model.trim()) opts.model = model.trim()
+    if (maxTurns.trim()) opts.max_turns = parseInt(maxTurns, 10)
+    return Object.keys(opts).length > 0 ? opts : undefined
+  }
+
+  const handleSend = () => {
+    if (!prompt.trim()) return
+    query.sendQuery(prompt.trim(), buildOptions())
+  }
 
   const handleDelete = () => {
     if (id) {
@@ -146,6 +171,116 @@ export function ContainerDetailPage() {
             </CardContent>
           </Card>
         </div>
+
+        {/* Query Sidecar */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-sm">{t('Query Sidecar')}</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {/* Prompt input */}
+            <Textarea
+              placeholder={t('Enter your prompt...')}
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                  handleSend()
+                }
+              }}
+              disabled={query.isStreaming}
+              rows={3}
+            />
+
+            {/* Advanced options toggle */}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setShowAdvanced(!showAdvanced)}
+              className="h-7 px-2 text-xs"
+            >
+              {showAdvanced ? <ChevronUp className="h-3 w-3 mr-1" /> : <ChevronDown className="h-3 w-3 mr-1" />}
+              {t('Advanced Options')}
+            </Button>
+
+            {/* Advanced options fields */}
+            {showAdvanced && (
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div className="space-y-1">
+                  <label className="text-xs text-muted-foreground">{t('Model')}</label>
+                  <Input
+                    placeholder="claude-sonnet-4-6"
+                    value={model}
+                    onChange={(e) => setModel(e.target.value)}
+                    disabled={query.isStreaming}
+                    className="h-8 text-xs"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs text-muted-foreground">{t('Max Turns')}</label>
+                  <Input
+                    type="number"
+                    placeholder="10"
+                    value={maxTurns}
+                    onChange={(e) => setMaxTurns(e.target.value)}
+                    disabled={query.isStreaming}
+                    className="h-8 text-xs"
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Action buttons */}
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                onClick={handleSend}
+                disabled={query.isStreaming || !prompt.trim()}
+              >
+                <Send className="h-3.5 w-3.5 mr-1.5" />
+                {t('Send')}
+              </Button>
+              {query.isStreaming && (
+                <Button variant="outline" size="sm" onClick={query.cancel}>
+                  <X className="h-3.5 w-3.5 mr-1.5" />
+                  {t('Cancel')}
+                </Button>
+              )}
+              {query.events.length > 0 && !query.isStreaming && (
+                <Button variant="ghost" size="sm" onClick={query.clear}>
+                  {t('Clear')}
+                </Button>
+              )}
+            </div>
+
+            {/* Error display */}
+            {query.error && (
+              <p className="text-destructive text-sm">{query.error}</p>
+            )}
+
+            {/* SSE event display */}
+            <div className="h-80 overflow-y-auto rounded-md border bg-muted/50 p-3 font-mono text-xs">
+              {query.events.length === 0 && !query.isStreaming && (
+                <p className="text-muted-foreground text-center mt-20">
+                  {t('Send a prompt to query the sidecar...')}
+                </p>
+              )}
+              {query.events.map((ev, i) => (
+                <div key={i} className="mb-2 leading-relaxed">
+                  <Badge variant="outline" className="mr-1.5 text-[10px] px-1 py-0 align-middle">
+                    {ev.event}
+                  </Badge>
+                  <span className="whitespace-pre-wrap break-all">{ev.data}</span>
+                </div>
+              ))}
+              {query.isStreaming && (
+                <div className="flex items-center gap-2 text-muted-foreground">
+                  <Skeleton className="h-3 w-full" />
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
 
         <Card>
           <CardHeader>

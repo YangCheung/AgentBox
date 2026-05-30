@@ -110,6 +110,10 @@ async fn main() {
             "/api/containers/{id}/logs",
             get(api::ws::container_logs_ws),
         )
+        .route(
+            "/api/containers/{id}/query",
+            post(api::query::proxy_query),
+        )
         .layer(middleware::from_fn_with_state(
             app_state.clone(),
             auth::api_key_auth,
