@@ -124,3 +124,31 @@ pub struct StatsResponse {
     pub total: i64,
     pub by_status: std::collections::HashMap<String, i64>,
 }
+
+/// Options for sidecar query — mirrors sidecar's QueryOptions
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct QueryOptions {
+    pub model: Option<String>,
+    pub fallback_model: Option<String>,
+    pub system_prompt: Option<String>,
+    pub append_system_prompt: Option<String>,
+    pub max_turns: Option<i32>,
+    pub max_output_tokens: Option<u32>,
+    pub max_thinking_tokens: Option<i32>,
+    pub allowed_tools: Option<Vec<String>>,
+    pub disallowed_tools: Option<Vec<String>>,
+    pub cwd: Option<String>,
+    pub session_id: Option<String>,
+    pub resume: Option<String>,
+    pub continue_conversation: Option<bool>,
+    pub include_partial_messages: Option<bool>,
+    pub max_budget_usd: Option<f64>,
+}
+
+/// Request body for POST /api/containers/{id}/query
+#[derive(Debug, Serialize, Deserialize)]
+pub struct QueryRequest {
+    pub prompt: String,
+    #[serde(default)]
+    pub options: Option<QueryOptions>,
+}
