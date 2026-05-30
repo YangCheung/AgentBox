@@ -133,5 +133,12 @@
   "API Key Not Set": "API 密钥未设置",
   "Save": "保存",
   "Saving...": "保存中...",
-  "Enter API key...": "输入 API 密钥..."
+  "Enter API key...": "输入 API 密钥...",
+  "Query Sidecar": "查询 Sidecar",
+  "Enter your prompt...": "输入你的提示词...",
+  "Advanced Options": "高级选项",
+  "Model": "模型",
+  "Max Turns": "最大轮次",
+  "Send": "发送",
+  "Send a prompt to query the sidecar...": "发送提示词以查询 sidecar..."
 }

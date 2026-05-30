@@ -111,6 +111,16 @@ impl Database {
         .map_err(|e| AppError::DatabaseError(e.to_string()))
     }
 
+    pub async fn get_container_opt(&self, id: &str) -> Result<Option<Container>, AppError> {
+        sqlx::query_as::<_, Container>(
+            "SELECT id, task, status, docker_id, skill_repos, cpu_limit, memory_limit, idle_timeout, max_lifetime, created_at, last_activity FROM containers WHERE id = ?"
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| AppError::DatabaseError(e.to_string()))
+    }
+
     pub async fn update_status(&self, id: &str, status: &str) -> Result<(), AppError> {
         sqlx::query("UPDATE containers SET status = ? WHERE id = ?")
             .bind(status)

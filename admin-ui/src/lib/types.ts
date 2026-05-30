@@ -73,3 +73,33 @@ export interface UpdateConfigResponse {
   api_key_updated: boolean
   new_api_key: string | null
 }
+
+// Sidecar query types
+
+export interface QueryOptions {
+  model?: string
+  fallback_model?: string
+  system_prompt?: string
+  append_system_prompt?: string
+  max_turns?: number
+  max_output_tokens?: number
+  max_thinking_tokens?: number
+  allowed_tools?: string[]
+  disallowed_tools?: string[]
+  cwd?: string
+  session_id?: string
+  resume?: string
+  continue_conversation?: boolean
+  include_partial_messages?: boolean
+  max_budget_usd?: number
+}
+
+export interface QueryRequest {
+  prompt: string
+  options?: QueryOptions
+}
+
+export interface SseEvent {
+  event: string
+  data: string
+}
