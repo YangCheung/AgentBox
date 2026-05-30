@@ -35,9 +35,10 @@ AgentBox - 基于 Rust + Docker 的 AI Agent 运行沙箱平台。为 Claude Age
 
 | 组件 | 语言 | 职责 |
 |------|------|------|
-| **Control Plane** | Rust | 容器生命周期管理、REST/WebSocket API、鉴权、CORS、日志脱敏、空闲销毁 |
+| **Control Plane** | Rust | 容器生命周期管理、REST/WebSocket API、鉴权、CORS、日志脱敏、Docker 实际状态校验、空闲销毁 |
 | **Sidecar** | Rust | 容器内 HTTP server（`:9000`）；封装 `cc-sdk::query`，SSE 流式返回 Claude 消息；状态/心跳回传 |
 | **Agent Image** | Docker | 包含 Sidecar 二进制 + Claude Code CLI（`@anthropic-ai/claude-code`）的容器镜像 |
+| **Admin UI** | React + Vite | 前端管理界面；容器 CRUD、实时 WebSocket 日志流、状态监控 |
 
 ### 技术栈
 
@@ -47,6 +48,7 @@ AgentBox - 基于 Rust + Docker 的 AI Agent 运行沙箱平台。为 Claude Age
 - **数据库**：SQLite (sqlx 0.8)
 - **异步运行时**：Tokio 1.x
 - **日志**：Tracing
+- **前端**：React 19 + Vite + shadcn/ui + Tailwind CSS v4
 
 ## 快速开始
 
@@ -78,8 +80,11 @@ cargo run -p control-plane
 cargo build --release
 docker build -t agent-sandbox:latest -f agent-image/Dockerfile .
 
-# 启动
+# 启动全部（control-plane + admin-ui）
 docker compose up -d
+
+# 仅启动 control-plane
+docker compose up control-plane -d
 ```
 
 ## API 文档
@@ -124,7 +129,7 @@ Content-Type: application/json
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | `task` | string | ✅ | Agent 执行的任务描述 |
-| `skill_repos` | string[] | ✅ | Skill 仓库地址列表 |
+| `skill_repos` | string[] | ❌ | Skill 仓库地址列表（可选） |
 | `skill_branch` | string | ❌ | Skill 仓库分支，默认 `main` |
 | `cpu_limit` | string | ❌ | CPU 限制，默认 `2` (核) |
 | `memory_limit` | string | ❌ | 内存限制，默认 `4Gi` |
@@ -374,7 +379,7 @@ agentbox/
 │       ├── models/container.rs         # 数据模型
 │       ├── docker/
 │       │   ├── manager.rs              # Docker 操作（Bollard）
-│       │   └── lifecycle.rs            # 生命周期巡检
+│       │   └── lifecycle.rs            # 生命周期巡检（含 Docker 实际状态校验）
 │       ├── db/sqlite.rs                # 数据库操作
 │       └── api/
 │           ├── containers.rs           # 容器 CRUD + 状态回调
@@ -387,9 +392,15 @@ agentbox/
 │       ├── query.rs                    # POST /query SSE handler（cc_sdk::query 封装）
 │       ├── reporter.rs                 # 状态/心跳上报
 │       └── health.rs                   # 后台心跳循环
-└── agent-image/                        # Agent 镜像
-    ├── Dockerfile                      # sidecar + Claude CLI
-    └── entrypoint.sh                   # 克隆 skills 后 exec sidecar
+├── agent-image/                        # Agent 镜像
+│   ├── Dockerfile                      # sidecar + Claude CLI
+│   └── entrypoint.sh                   # 克隆 skills 后 exec sidecar
+└── admin-ui/                           # 前端管理界面 (React + Vite + shadcn/ui)
+    ├── Dockerfile                      # Nginx 静态部署
+    └── src/
+        ├── pages/                      # 容器列表、详情、创建
+        ├── components/                 # UI 组件（含 LogViewer WebSocket 日志）
+        └── hooks/                      # API hooks、WebSocket 日志 hook
 ```
 
 ### 运行测试
@@ -401,6 +412,9 @@ cargo test
 # 指定包测试
 cargo test -p control-plane
 cargo test -p sidecar
+
+# 前端开发
+cd admin-ui && npm run dev
 ```
 
 ### 构建镜像
@@ -419,8 +433,9 @@ docker build -t agent-sandbox:latest -f agent-image/Dockerfile .
 - [x] API 认证鉴权（API Key Bearer token）
 - [x] 收紧 CORS 默认值（localhost only，可配 `ALLOWED_ORIGINS`）
 - [x] Sidecar 接入 Claude SDK（cc-sdk 0.8，SSE 流式 query）
+- [x] Admin UI 管理界面（容器 CRUD + 实时日志流）
 - [ ] Control-plane 透传 sidecar 的 `/query` SSE（统一外部入口 + 鉴权 + 流量控制）
-- [ ] 容器列表/分页查询、历史日志（非实时）查询
+- [ ] 历史日志（非实时）查询
 - [ ] 容器池/预热机制
 - [ ] Kubernetes 部署支持
 - [ ] Prometheus 监控指标

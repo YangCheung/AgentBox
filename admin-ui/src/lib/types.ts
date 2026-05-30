@@ -23,7 +23,7 @@ export interface ContainerResponse {
 
 export interface CreateContainerRequest {
   task: string
-  skill_repos: string[]
+  skill_repos?: string[]
   skill_branch?: string
   cpu_limit?: string
   memory_limit?: string

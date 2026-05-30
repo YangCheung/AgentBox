@@ -66,7 +66,7 @@ impl Container {
 #[derive(Debug, Deserialize)]
 pub struct CreateContainerRequest {
     pub task: String,
-    pub skill_repos: Vec<String>,
+    pub skill_repos: Option<Vec<String>>,
     pub skill_branch: Option<String>,
     pub cpu_limit: Option<String>,
     pub memory_limit: Option<String>,
