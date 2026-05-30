@@ -34,6 +34,20 @@ impl LifecycleManager {
         let now = chrono::Utc::now();
 
         for container in containers {
+            // 检查 Docker 容器是否实际还在运行
+            if let (Some(docker_id), Some(dm)) = (&container.docker_id, &self.docker_manager) {
+                if !dm.is_container_running(docker_id).await {
+                    tracing::info!(
+                        "Container {} ({}) is no longer running in Docker, marking as Stopped",
+                        container.id,
+                        docker_id
+                    );
+                    self.db
+                        .update_status(&container.id, ContainerStatus::Stopped.to_string().as_str())
+                        .await?;
+                    continue;
+                }
+            }
             let created_at = match chrono::DateTime::parse_from_rfc3339(&container.created_at) {
                 Ok(dt) => dt.with_timezone(&chrono::Utc),
                 Err(e) => {

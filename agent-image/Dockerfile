@@ -1,10 +1,10 @@
-FROM rust:1.95-slim as builder
+FROM rust:1.95-slim AS builder
 
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/lib/apt/lists/*
 
-COPY Cargo.toml ./
+COPY Cargo.toml Cargo.lock ./
 COPY control-plane/Cargo.toml ./control-plane/
 COPY sidecar/Cargo.toml ./sidecar/
 

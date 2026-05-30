@@ -18,7 +18,7 @@ export function CreateContainerPage() {
   const mutation = useCreateContainer()
 
   const [task, setTask] = useState('')
-  const [skillRepos, setSkillRepos] = useState<string[]>([''])
+  const [skillRepos, setSkillRepos] = useState<string[]>([])
   const [skillBranch, setSkillBranch] = useState('main')
   const [cpuLimit, setCpuLimit] = useState('2')
   const [memoryLimit, setMemoryLimit] = useState('4Gi')
@@ -53,10 +53,6 @@ export function CreateContainerPage() {
       return
     }
     const repos = skillRepos.filter((r) => r.trim())
-    if (repos.length === 0) {
-      setError(t('At least one skill repo is required'))
-      return
-    }
 
     const env: Record<string, string> = {}
     for (let i = 0; i < envKeys.length; i++) {
@@ -68,7 +64,7 @@ export function CreateContainerPage() {
     mutation.mutate(
       {
         task: task.trim(),
-        skill_repos: repos,
+        skill_repos: repos.length > 0 ? repos : undefined,
         skill_branch: skillBranch || undefined,
         cpu_limit: cpuLimit || undefined,
         memory_limit: memoryLimit || undefined,
@@ -108,7 +104,7 @@ export function CreateContainerPage() {
               </div>
 
               <div className="space-y-2">
-                <Label>{t('Skill Repos *')}</Label>
+                <Label>{t('Skill Repos')}</Label>
                 {skillRepos.map((repo, i) => (
                   <div key={i} className="flex gap-2">
                     <Input

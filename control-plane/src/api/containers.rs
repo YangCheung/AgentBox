@@ -16,14 +16,15 @@ pub async fn create_container(
     let container_id = uuid::Uuid::new_v4().to_string();
     let docker_name = format!("agent-{}", &container_id);
 
+    let skill_repos = payload.skill_repos.unwrap_or_default();
     let skill_repos_json =
-        serde_json::to_string(&payload.skill_repos).unwrap_or_else(|_| "[]".to_string());
+        serde_json::to_string(&skill_repos).unwrap_or_else(|_| "[]".to_string());
 
     let mut env_vars = vec![
         format!("TASK={}", payload.task),
         format!("CONTAINER_ID={}", container_id),
         format!("CONTROL_PLANE_URL=http://host.docker.internal:8080"),
-        format!("SKILL_REPOS={}", payload.skill_repos.join(",")),
+        format!("SKILL_REPOS={}", skill_repos.join(",")),
     ];
 
     {

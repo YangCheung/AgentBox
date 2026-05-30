@@ -44,7 +44,7 @@ The main REST API service (Axum 0.8) that manages Docker container lifecycles. C
   - `DELETE /api/containers/{id}` — stop + remove container + delete DB record
   - `POST /api/containers/{id}/status` — receive status reports from sidecar
   - `GET /api/containers/{id}/logs` — WebSocket stream of container stdout/stderr (with secret redaction)
-- **LifecycleManager** runs as a background task (30s tick), checking idle timeout and max lifetime for all active containers. When exceeded, it stops/removes the Docker container and marks it `Stopped` in the DB. Containers with unparseable timestamps are skipped (logged) rather than treated as 1970.
+- **LifecycleManager** runs as a background task (30s tick). For each active container it: (1) checks whether the Docker container is actually still running via `inspect_container`; if not, marks it `Stopped` in the DB; (2) checks idle timeout and max lifetime, stopping/removing expired containers. Containers with unparseable timestamps are skipped (logged) rather than treated as 1970.
 - **Auth middleware** (`control-plane/src/auth.rs`) checks the `Authorization: Bearer <key>` header on all routes except `/health`. If `API_KEY` env var is not set, auth is skipped entirely (development mode).
 - **CORS** (`build_cors` in `main.rs`) defaults to localhost only. Set `ALLOWED_ORIGINS=https://a.com,https://b.com` to allow specific origins, or `ALLOWED_ORIGINS=*` for wildcard (logged as warning).
 - **Log redaction** (`control-plane/src/redact.rs`) collects values of known secret env vars (`ANTHROPIC_API_KEY`, `API_KEY`, `OPENAI_API_KEY`, `GITHUB_TOKEN`, `GH_TOKEN`) at startup and replaces them with `***REDACTED***` in the WebSocket log stream.
@@ -63,7 +63,7 @@ Docker image for agent containers. Contains the sidecar binary and the `claude` 
 
 ## Key Data Flow
 
-1. Caller POSTs to `/api/containers` with task + skill repos + resource limits
+1. Caller POSTs to `/api/containers` with task + optional skill repos + resource limits
 2. Control plane generates a UUID, creates a Docker container named `agent-{uuid}`, injects env vars (`TASK`, `CONTAINER_ID`, `CONTROL_PLANE_URL`, `SKILL_REPOS`, `ANTHROPIC_API_KEY`)
 3. Container starts → entrypoint clones skills → execs sidecar
 4. Sidecar listens on `:9000` and sends initial `running/ready` status; heartbeats every 30s

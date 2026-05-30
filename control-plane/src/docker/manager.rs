@@ -90,6 +90,16 @@ impl DockerManager {
     pub async fn container_exists(&self, name: &str) -> bool {
         self.docker.inspect_container(name, None).await.is_ok()
     }
+
+    pub async fn is_container_running(&self, name: &str) -> bool {
+        match self.docker.inspect_container(name, None).await {
+            Ok(info) => info
+                .state
+                .and_then(|s| s.running)
+                .unwrap_or(false),
+            Err(_) => false,
+        }
+    }
 }
 
 fn parse_memory(s: &str) -> i64 {
