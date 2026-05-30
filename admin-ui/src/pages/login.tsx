@@ -28,7 +28,7 @@ export function LoginPage() {
     setError('')
 
     try {
-      const res = await fetch('/health', {
+      const res = await fetch('/api/stats', {
         headers: { Authorization: `Bearer ${key}` },
       })
       if (res.status === 401) {
