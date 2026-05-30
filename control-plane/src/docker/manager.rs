@@ -188,6 +188,48 @@ impl DockerManager {
 
         Ok(())
     }
+
+    /// Get the IP address of a running container on the Docker network.
+    /// Returns an error if the container is not running or the IP cannot be determined.
+    pub async fn get_container_ip(&self, name: &str) -> Result<String, AppError> {
+        let info = self
+            .docker
+            .inspect_container(name, None)
+            .await
+            .map_err(|e| AppError::DockerError(format!("Failed to inspect container {}: {}", name, e)))?;
+
+        let running = info
+            .state
+            .as_ref()
+            .and_then(|s| s.running)
+            .unwrap_or(false);
+        if !running {
+            return Err(AppError::BadRequest(format!(
+                "Container {} is not running",
+                name
+            )));
+        }
+
+        // Iterate networks to find the container IP
+        if let Some(networks) = info
+            .network_settings
+            .as_ref()
+            .and_then(|ns| ns.networks.as_ref())
+        {
+            for (_name, net) in networks {
+                if let Some(ip) = &net.ip_address {
+                    if !ip.is_empty() {
+                        return Ok(ip.clone());
+                    }
+                }
+            }
+        }
+
+        Err(AppError::DockerError(format!(
+            "Could not determine IP address for container {}",
+            name
+        )))
+    }
 }
 
 fn parse_memory(s: &str) -> i64 {

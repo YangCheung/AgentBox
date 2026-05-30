@@ -109,4 +109,80 @@ export function wsUrl(path: string): string {
   return base
 }
 
+export async function postSseStream(
+  path: string,
+  body: unknown,
+  onEvent: (event: { event: string; data: string }) => void,
+  signal?: AbortSignal
+): Promise<void> {
+  const token = getToken()
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  }
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`
+  }
+
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(body),
+    signal,
+  })
+
+  if (res.status === 401) {
+    localStorage.removeItem('agentbox_api_key')
+    sessionStorage.removeItem('agentbox_api_key')
+    window.dispatchEvent(new CustomEvent('auth:logout'))
+    throw new ApiError('Unauthorized', 401)
+  }
+
+  if (!res.ok) {
+    const text = await res.text()
+    throw new ApiError(text || res.statusText, res.status)
+  }
+
+  const reader = res.body?.getReader()
+  if (!reader) throw new ApiError('No response body', 500)
+
+  const decoder = new TextDecoder()
+  let buffer = ''
+  let currentEvent = ''
+  let currentData = ''
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      // Keep the last incomplete line in the buffer
+      buffer = lines.pop() || ''
+
+      for (const line of lines) {
+        if (line.startsWith('event: ')) {
+          currentEvent = line.slice(7)
+        } else if (line.startsWith('data: ')) {
+          currentData = line.slice(6)
+        } else if (line === '') {
+          // Empty line means dispatch the event
+          if (currentData) {
+            onEvent({ event: currentEvent || 'message', data: currentData })
+          }
+          currentEvent = ''
+          currentData = ''
+        }
+      }
+    }
+  } finally {
+    reader.cancel()
+  }
+
+  // Flush any remaining event
+  if (currentData) {
+    onEvent({ event: currentEvent || 'message', data: currentData })
+  }
+}
+
 export { ApiError }
