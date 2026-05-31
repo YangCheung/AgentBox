@@ -38,7 +38,7 @@ AgentBox - 基于 Rust + Docker 的 AI Agent 运行沙箱平台。为 Claude Age
 |------|------|------|
 | **Control Plane** | Rust | 容器生命周期管理、REST/WebSocket/SSE API、鉴权、CORS、日志脱敏、Docker 实际状态校验、空闲销毁、Sidecar Query 代理 |
 | **Sidecar** | Rust | 容器内 HTTP server（`:9000`）；封装 `cc-sdk::query`，SSE 流式返回 Claude 消息；状态/心跳回传 |
-| **Agent Image** | Docker | 包含 Sidecar 二进制 + Claude Code CLI（`@anthropic-ai/claude-code`）的容器镜像 |
+| **Agent Image** | Docker | 包含 Sidecar 二进制 + Claude Code CLI + Node.js 20 + Python3 的容器镜像 |
 | **Admin UI** | React + Vite | 前端管理界面；容器 CRUD、实时 WebSocket 日志流、状态监控 |
 
 ### 技术栈
@@ -124,6 +124,7 @@ Content-Type: application/json
 ```json
 {
   "task": "Review code PR #42",
+  "skill_ids": ["uuid-of-uploaded-skill"],
   "skill_repos": ["https://github.com/company/skills.git"],
   "skill_branch": "main",
   "cpu_limit": "2",
@@ -139,6 +140,7 @@ Content-Type: application/json
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | `task` | string | ✅ | Agent 执行的任务描述 |
+| `skill_ids` | string[] | ❌ | 已上传的 Skill ID 列表（复制到容器 `/workspace/skills/`） |
 | `skill_repos` | string[] | ❌ | Skill 仓库地址列表（可选） |
 | `skill_branch` | string | ❌ | Skill 仓库分支，默认 `main` |
 | `cpu_limit` | string | ❌ | CPU 限制，默认 `2` (核) |
@@ -241,6 +243,18 @@ curl -N -X POST http://localhost:8080/api/containers/<id>/query \
   -H "Authorization: Bearer $API_KEY" \
   -d '{"prompt":"Review this code for bugs"}'
 ```
+
+### Skill 管理
+
+```http
+POST /api/skills          # 上传 Skill（multipart: file=ZIP, name=可选, description=可选）
+GET /api/skills            # 列表（支持 ?search= 和分页）
+GET /api/skills/{id}       # 详情
+PUT /api/skills/{id}       # 更新 name/description
+DELETE /api/skills/{id}    # 删除
+```
+
+上传时自动从 ZIP 内 `skill.md` 的 YAML frontmatter 提取 `name` 和 `description`（文件名不区分大小写）。Skill 存储在 `SKILLS_DIR`（默认 `/data/skills`），创建容器时通过 `skill_ids` 指定要复制的 Skill。
 
 ### 状态回传 (Sidecar → Control Plane)
 
@@ -366,6 +380,7 @@ curl -N -X POST http://agent-<id>:9000/query \
 | `API_KEY` | *(unset)* | 设置后所有非 `/health` 路由要求 `Authorization: Bearer <key>`；未设置则不鉴权（开发模式） |
 | `ALLOWED_ORIGINS` | localhost only | CORS 允许来源；逗号分隔；`*` 表示通配（会打 warning） |
 | `ANTHROPIC_API_KEY` | *(unset)* | 注入到所有 agent 容器；同时被收集用于日志流脱敏 |
+| `SKILLS_DIR` | `/data/skills` | Skill 文件存储目录 |
 | `RUST_LOG` | `info` | 日志级别 |
 
 ### 环境变量 (Sidecar 容器)
@@ -427,13 +442,16 @@ agentbox/
 │       ├── auth.rs                     # Bearer token 中间件
 │       ├── redact.rs                   # 日志流密钥脱敏
 │       ├── error.rs                    # 错误类型
-│       ├── models/container.rs         # 数据模型
+│       ├── models/
+│       │   ├── container.rs            # 容器数据模型（含 skill_ids）
+│       │   └── skill.rs                # Skill 数据模型
 │       ├── docker/
 │       │   ├── manager.rs              # Docker 操作（Bollard）
 │       │   └── lifecycle.rs            # 生命周期巡检（含 Docker 实际状态校验）
 │       ├── db/sqlite.rs                # 数据库操作
 │       └── api/
 │           ├── containers.rs           # 容器 CRUD + 状态回调
+│           ├── skills.rs               # Skill CRUD（ZIP 上传 + skill.md 元数据提取）
 │           ├── query.rs                # POST /query SSE 代理透传
 │           ├── ws.rs                   # WebSocket 日志流（含 redact）
 │           └── health.rs               # 健康检查
@@ -488,6 +506,7 @@ docker build -t agent-sandbox:latest -f agent-image/Dockerfile .
 - [x] Admin UI 管理界面（容器 CRUD + 实时日志流）
 - [x] 容器列表/分页查询、历史日志（非实时）查询
 - [x] Control-plane 透传 sidecar 的 `/query` SSE（统一外部入口 + 鉴权 + 流量控制）
+- [x] Skill 管理（ZIP 上传、自动元数据提取、容器内技能复制）
 - [ ] 容器池/预热机制
 - [ ] Kubernetes 部署支持
 - [ ] Prometheus 监控指标
@@ -503,9 +522,10 @@ React + Vite + TypeScript 管理后台，位于 `admin-ui/` 目录。
 - API Key 登录认证
 - Dashboard 统计面板（容器状态分布 + 最近容器）
 - 容器列表（搜索、状态筛选、排序、分页、删除）
-- 创建容器表单（任务、Skill Repos、资源限制、环境变量）
+- 创建容器表单（任务、Skill 选择、Skill Repos、资源限制、环境变量）
 - 容器详情 + WebSocket 实时日志流
 - **Sidecar Query 交互查询**（prompt 输入 + 高级选项 + SSE 实时返回）
+- **Skill 管理**（ZIP 上传、拖拽上传、自动从 skill.md 提取元数据、编辑、删除）
 - 中英双语（自动检测 + 手动切换）
 - 暗色/亮色主题切换
 

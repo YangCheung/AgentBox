@@ -43,7 +43,9 @@ The main REST API service (Axum 0.8) that manages Docker container lifecycles. C
   - `GET /api/containers/{id}` — get container metadata
   - `DELETE /api/containers/{id}` — stop + remove container + delete DB record
   - `POST /api/containers/{id}/status` — receive status reports from sidecar
+  - `POST /api/containers/{id}/query` — proxy SSE query to sidecar
   - `GET /api/containers/{id}/logs` — WebSocket stream of container stdout/stderr (with secret redaction)
+  - `GET/POST/PUT/DELETE /api/skills` — skill CRUD (ZIP upload with auto metadata extraction from skill.md)
 - **LifecycleManager** runs as a background task (30s tick). For each active container it: (1) checks whether the Docker container is actually still running via `inspect_container`; if not, marks it `Stopped` in the DB; (2) checks idle timeout and max lifetime, stopping/removing expired containers. Containers with unparseable timestamps are skipped (logged) rather than treated as 1970.
 - **Auth middleware** (`control-plane/src/auth.rs`) checks the `Authorization: Bearer <key>` header on all routes except `/health`. If `API_KEY` env var is not set, auth is skipped entirely (development mode).
 - **CORS** (`build_cors` in `main.rs`) defaults to localhost only. Set `ALLOWED_ORIGINS=https://a.com,https://b.com` to allow specific origins, or `ALLOWED_ORIGINS=*` for wildcard (logged as warning).
@@ -59,7 +61,10 @@ Runs inside each agent container as an HTTP server (Axum 0.8) on `SIDECAR_ADDR` 
 - **SSE event names**: `assistant`, `user`, `system`, `result`, `stream_event`, `rate_limit`, `error`. Each event's `data:` is the JSON-serialized `Message`. The stream ends naturally after `cc_sdk` finishes (typically after the `result` event). Keep-alive is 15s.
 
 ### Agent Image (`agent-image/`)
-Docker image for agent containers. Contains the sidecar binary and the `claude` CLI (installed via npm `@anthropic-ai/claude-code`). The entrypoint script (`entrypoint.sh`) clones skill repos from `$SKILL_REPOS` (comma-separated Git URLs) into `/workspace/skills/`, then execs the sidecar. Exposes port 9000.
+Docker image for agent containers. Contains the sidecar binary, the `claude` CLI (installed via npm `@anthropic-ai/claude-code`), Node.js 20 LTS, and Python3. The entrypoint script (`entrypoint.sh`) clones skill repos from `$SKILL_REPOS` (comma-separated Git URLs) into `/workspace/skills/`, then execs the sidecar. Exposes port 9000.
+
+### Skills Management
+Skills are uploaded as ZIP files via `POST /api/skills`. Metadata (`name`, `description`) is auto-extracted from `skill.md` YAML frontmatter inside the ZIP (case-insensitive filename match). Skills are stored on disk at `SKILLS_DIR` (default `/data/skills` in Docker volume). When creating a container, specify `skill_ids` to copy selected skills into `/workspace/skills/{name}/`.
 
 ## Key Data Flow
 
@@ -72,7 +77,7 @@ Docker image for agent containers. Contains the sidecar binary and the `claude` 
 
 ## Environment Variables
 
-**Control Plane**: `DATABASE_URL` (default `sqlite:agent_sandbox.db?mode=rwc`), `SERVER_ADDR` (default `0.0.0.0:8080`), `AGENT_IMAGE` (default `agent-sandbox:latest`), `API_KEY` (optional; if set, all non-/health routes require `Authorization: Bearer <key>`), `ALLOWED_ORIGINS` (comma-separated; default localhost only; `*` for wildcard), `ANTHROPIC_API_KEY` (forwarded into agent containers and redacted from log streams), `RUST_LOG` (default `info`)
+**Control Plane**: `DATABASE_URL` (default `sqlite:agent_sandbox.db?mode=rwc`), `SERVER_ADDR` (default `0.0.0.0:8080`), `AGENT_IMAGE` (default `agent-sandbox:latest`), `API_KEY` (optional; if set, all non-/health routes require `Authorization: Bearer <key>`), `ALLOWED_ORIGINS` (comma-separated; default localhost only; `*` for wildcard), `ANTHROPIC_API_KEY` (forwarded into agent containers and redacted from log streams), `SKILLS_DIR` (default `/data/skills`), `RUST_LOG` (default `info`)
 
 **Sidecar/Container**: `CONTAINER_ID` (required), `CONTROL_PLANE_URL` (for heartbeats), `SIDECAR_ADDR` (default `0.0.0.0:9000`), `SKILL_REPOS`, `ANTHROPIC_API_KEY`, `TASK` (legacy; not consumed by sidecar after the cc-sdk migration — query is now request-driven)
 
