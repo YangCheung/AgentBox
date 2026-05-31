@@ -1,5 +1,5 @@
 use bollard::Docker;
-use bollard::query_parameters::CreateContainerOptions;
+use bollard::query_parameters::{CreateContainerOptions, RemoveContainerOptions, StopContainerOptions};
 use bollard::models::{ContainerCreateBody, HostConfig};
 
 use crate::error::AppError;
@@ -60,16 +60,18 @@ impl DockerManager {
     }
 
     pub async fn stop_container(&self, name: &str) -> Result<(), AppError> {
+        let options = StopContainerOptions { t: Some(2), signal: None };
         self.docker
-            .stop_container(name, None)
+            .stop_container(name, Some(options))
             .await
             .map_err(|e| AppError::DockerError(e.to_string()))?;
         Ok(())
     }
 
     pub async fn remove_container(&self, name: &str) -> Result<(), AppError> {
+        let options = RemoveContainerOptions { force: true, ..Default::default() };
         self.docker
-            .remove_container(name, None)
+            .remove_container(name, Some(options))
             .await
             .map_err(|e| AppError::DockerError(e.to_string()))?;
         Ok(())

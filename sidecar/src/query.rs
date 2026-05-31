@@ -1,13 +1,13 @@
-use std::convert::Infallible;
 use std::time::Duration;
 
 use axum::{
+    body::Body,
     http::StatusCode,
-    response::sse::{Event, KeepAlive, Sse},
+    response::{IntoResponse, Response},
     Json,
 };
 use cc_sdk::{query, ClaudeCodeOptions, Message};
-use futures::stream::{Stream, StreamExt};
+use futures::stream::{self, StreamExt};
 use serde::Deserialize;
 use serde_json::json;
 
@@ -100,9 +100,17 @@ fn msg_event_name(msg: &Message) -> &'static str {
     }
 }
 
+fn format_sse(msg: &Message) -> String {
+    let event_name = msg_event_name(msg);
+    let data = serde_json::to_string(msg).unwrap_or_else(|e| {
+        json!({ "error": format!("serialize: {}", e) }).to_string()
+    });
+    format!("event: {}\ndata: {}\n\n", event_name, data)
+}
+
 pub async fn handle_query(
     Json(req): Json<QueryRequest>,
-) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, (StatusCode, String)> {
+) -> Result<impl IntoResponse, (StatusCode, String)> {
     if req.prompt.trim().is_empty() {
         return Err((StatusCode::BAD_REQUEST, "prompt must not be empty".into()));
     }
@@ -118,25 +126,50 @@ pub async fn handle_query(
         )
     })?;
 
-    let event_stream = upstream.map(|item| -> Result<Event, Infallible> {
-        match item {
-            Ok(msg) => {
-                let event_name = msg_event_name(&msg);
-                let data = serde_json::to_string(&msg).unwrap_or_else(|e| {
-                    json!({ "error": format!("serialize: {}", e) }).to_string()
-                });
-                Ok(Event::default().event(event_name).data(data))
+    // Transform the cc_sdk stream into SSE bytes, stopping after the result event.
+    // Apply a global timeout to prevent infinite hangs.
+    let timeout = Duration::from_secs(300);
+    let sse_stream = stream::unfold(
+        (upstream, false, false),
+        move |(mut stream, done, timed_out)| async move {
+            if done || timed_out {
+                return None;
             }
-            Err(e) => {
-                tracing::warn!("cc_sdk stream error: {}", e);
-                Ok(Event::default()
-                    .event("error")
-                    .data(json!({ "message": e.to_string() }).to_string()))
+            match tokio::time::timeout(timeout, stream.next()).await {
+                Ok(Some(Ok(msg))) => {
+                    let is_result = matches!(msg, Message::Result { .. });
+                    let bytes = format_sse(&msg).into_bytes();
+                    Some((Ok::<_, std::io::Error>(bytes), (stream, is_result, false)))
+                }
+                Ok(Some(Err(e))) => {
+                    tracing::warn!("cc_sdk stream error: {}", e);
+                    let data = json!({ "message": e.to_string() }).to_string();
+                    let bytes = format!("event: error\ndata: {}\n\n", data).into_bytes();
+                    Some((Ok(bytes), (stream, true, false)))
+                }
+                Ok(None) => None, // Stream ended
+                Err(_) => {
+                    tracing::warn!("Query timed out after {:?}", timeout);
+                    let data = json!({ "message": "query timed out" }).to_string();
+                    let bytes = format!("event: error\ndata: {}\n\n", data).into_bytes();
+                    Some((Ok(bytes), (stream, false, true)))
+                }
             }
-        }
-    });
+        },
+    );
 
-    Ok(Sse::new(event_stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15))))
+    let body = Body::from_stream(sse_stream);
+
+    let response = Response::builder()
+        .status(200)
+        .header("Content-Type", "text/event-stream")
+        .header("Cache-Control", "no-cache")
+        .header("X-Accel-Buffering", "no")
+        .header("Connection", "close")
+        .body(body)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    Ok(response)
 }
 
 #[cfg(test)]

@@ -1,15 +1,67 @@
+use std::time::Duration;
+
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
     Json,
 };
 use chrono::Utc;
+use tracing::{debug, warn};
 
 use crate::error::AppError;
 use crate::models::container::*;
 use crate::AppState;
 
 use crate::models::skill::Skill;
+
+const SIDECAR_HEALTH_RETRIES: u32 = 20;
+const SIDECAR_HEALTH_INITIAL_DELAY: Duration = Duration::from_millis(500);
+
+/// Wait for the sidecar's /health endpoint to respond, with exponential backoff.
+async fn wait_for_sidecar(ip: &str) -> Result<(), AppError> {
+    let health_url = format!("http://{}:9000/health", ip);
+    let client = reqwest::Client::new();
+    let mut delay = SIDECAR_HEALTH_INITIAL_DELAY;
+
+    for attempt in 1..=SIDECAR_HEALTH_RETRIES {
+        match client
+            .get(&health_url)
+            .timeout(Duration::from_secs(2))
+            .send()
+            .await
+        {
+            Ok(resp) if resp.status().is_success() => {
+                debug!("Sidecar at {} ready after {} attempt(s)", ip, attempt);
+                return Ok(());
+            }
+            Ok(resp) => {
+                debug!(
+                    "Sidecar health check returned {} (attempt {}/{})",
+                    resp.status(),
+                    attempt,
+                    SIDECAR_HEALTH_RETRIES
+                );
+            }
+            Err(e) => {
+                debug!(
+                    "Sidecar health check failed: {} (attempt {}/{})",
+                    e, attempt, SIDECAR_HEALTH_RETRIES
+                );
+            }
+        }
+        tokio::time::sleep(delay).await;
+        delay = (delay * 2).min(Duration::from_secs(2));
+    }
+
+    warn!(
+        "Sidecar at {} did not become ready after {} attempts",
+        ip, SIDECAR_HEALTH_RETRIES
+    );
+    Err(AppError::DockerError(format!(
+        "Sidecar at {} did not become ready in time",
+        ip
+    )))
+}
 
 pub async fn create_container(
     State(state): State<AppState>,
@@ -100,6 +152,10 @@ pub async fn create_container(
         }
     }
 
+    // Wait for sidecar to be ready before returning
+    let container_ip = docker_manager.get_container_ip(&docker_name).await?;
+    wait_for_sidecar(&container_ip).await?;
+
     let now = Utc::now().to_rfc3339();
     let container = Container {
         id: container_id.clone(),
@@ -144,16 +200,8 @@ pub async fn delete_container(
 
     if let Some(docker_id) = &container.docker_id {
         if let Some(docker_manager) = &state.docker_manager {
-            if let Err(e) = docker_manager.stop_container(docker_id).await {
-                tracing::warn!(
-                    "stop_container({}) failed during delete of {}: {}",
-                    docker_id,
-                    id,
-                    e
-                );
-            }
+            // Force remove handles stop + remove in one call
             if let Err(e) = docker_manager.remove_container(docker_id).await {
-                // 容器可能已被生命周期管理器清理；记录后继续删除 DB 记录
                 tracing::warn!(
                     "remove_container({}) failed during delete of {}: {}",
                     docker_id,

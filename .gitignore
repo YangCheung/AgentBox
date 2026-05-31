@@ -27,6 +27,10 @@ docker-compose.override.yml
 admin-ui/node_modules/
 admin-ui/dist/
 
+# SDK
+sdk/node_modules/
+sdk/dist/
+
 # Environment
 .env
 .env.local

@@ -74,21 +74,18 @@ pub async fn proxy_query(
         )));
     }
 
-    // 7. Stream the SSE response back to the client
+    // 7. Stream the response body chunk-by-chunk
     let byte_stream = upstream_response
         .bytes_stream()
-        .map(|result| result.map_err(|e| {
-            std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
-        }));
-
-    let body = Body::from_stream(byte_stream);
+        .map(|r| r.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e)));
 
     let response = Response::builder()
         .status(200)
         .header("Content-Type", "text/event-stream")
         .header("Cache-Control", "no-cache")
-        .header("X-Accel-Buffering", "no") // disable nginx buffering
-        .body(body)
+        .header("X-Accel-Buffering", "no")
+        .header("Connection", "close")
+        .body(Body::from_stream(byte_stream))
         .map_err(|e| AppError::DockerError(format!("Failed to build response: {}", e)))?;
 
     Ok(response)

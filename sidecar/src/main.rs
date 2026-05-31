@@ -5,6 +5,7 @@ mod reporter;
 use std::env;
 
 use axum::{routing::get, routing::post, Router};
+use tokio::signal::unix::{signal, SignalKind};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -50,7 +51,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
     tracing::info!("Sidecar listening on {}", bind_addr);
 
-    axum::serve(listener, app).await?;
+    // Graceful shutdown on SIGTERM / SIGINT
+    let shutdown = async {
+        let mut sigterm = signal(SignalKind::terminate()).expect("failed to register SIGTERM handler");
+        let mut sigint = signal(SignalKind::interrupt()).expect("failed to register SIGINT handler");
+        tokio::select! {
+            _ = sigterm.recv() => tracing::info!("Received SIGTERM, shutting down gracefully"),
+            _ = sigint.recv() => tracing::info!("Received SIGINT, shutting down gracefully"),
+        }
+    };
+
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown)
+        .await?;
+
+    tracing::info!("Sidecar stopped");
     Ok(())
 }
 

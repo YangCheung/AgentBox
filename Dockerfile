@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/li
 COPY Cargo.toml ./
 COPY control-plane/Cargo.toml ./control-plane/
 COPY sidecar/Cargo.toml ./sidecar/
+COPY cc-sdk-local/ ./cc-sdk-local/
 
 # 创建虚拟 main.rs 用于缓存依赖
 RUN mkdir -p control-plane/src && echo "fn main() {}" > control-plane/src/main.rs

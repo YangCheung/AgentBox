@@ -1,0 +1,26 @@
+{
+  "name": "@agentbox/sdk",
+  "version": "0.1.0",
+  "description": "TypeScript SDK for the AgentBox Control Plane API",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "demo": "tsx demo.ts"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.41",
+    "tsx": "^4.0.0",
+    "typescript": "^5.5.0"
+  }
+}

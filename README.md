@@ -40,6 +40,7 @@ AgentBox - 基于 Rust + Docker 的 AI Agent 运行沙箱平台。为 Claude Age
 | **Sidecar** | Rust | 容器内 HTTP server（`:9000`）；封装 `cc-sdk::query`，SSE 流式返回 Claude 消息；状态/心跳回传 |
 | **Agent Image** | Docker | 包含 Sidecar 二进制 + Claude Code CLI + Node.js 20 + Python3 的容器镜像 |
 | **Admin UI** | React + Vite | 前端管理界面；容器 CRUD、实时 WebSocket 日志流、状态监控 |
+| **TypeScript SDK** | TypeScript | `@agentbox/sdk`；零依赖 Node.js SDK，AsyncGenerator 流式交互 |
 
 ### 技术栈
 
@@ -159,6 +160,8 @@ Content-Type: application/json
 }
 ```
 
+> **注意**: 创建接口会等待容器内 Sidecar `/health` 端点就绪后才返回（指数退避重试，最多约 20 秒），确保返回后即可直接发送 Query 请求。
+
 ### 查询容器状态
 
 ```http
@@ -209,7 +212,7 @@ wscat -H "Authorization: Bearer $API_KEY" \
 POST /api/containers/{id}/query
 ```
 
-通过 Control Plane 代理向容器内 Sidecar 发送 prompt，SSE 流式返回 Claude 消息。统一外部入口，经过鉴权层。
+通过 Control Plane 代理向容器内 Sidecar 发送 prompt，SSE 流式返回 Claude 消息（chunk-by-chunk 透传，不缓冲）。统一外部入口，经过鉴权层。
 
 **请求体**:
 ```json
@@ -465,12 +468,22 @@ agentbox/
 ├── agent-image/                        # Agent 镜像
 │   ├── Dockerfile                      # sidecar + Claude CLI
 │   └── entrypoint.sh                   # 克隆 skills 后 exec sidecar
-└── admin-ui/                           # 前端管理界面 (React + Vite + shadcn/ui)
-    ├── Dockerfile                      # Nginx 静态部署
+├── admin-ui/                           # 前端管理界面 (React + Vite + shadcn/ui)
+│   ├── Dockerfile                      # Nginx 静态部署
+│   └── src/
+│       ├── pages/                      # 容器列表、详情、创建
+│       ├── components/                 # UI 组件（含 LogViewer WebSocket 日志）
+│       └── hooks/                      # API hooks、WebSocket 日志 hook、Query SSE hook
+├── cc-sdk-local/                       # cc-sdk 0.8.1 本地补丁 (添加 --include-partial-messages)
+│   └── src/query.rs                    # 补丁: 传递 include_partial_messages 到 CLI
+└── sdk/                                # TypeScript SDK (@agentbox/sdk)
+    ├── package.json
     └── src/
-        ├── pages/                      # 容器列表、详情、创建
-        ├── components/                 # UI 组件（含 LogViewer WebSocket 日志）
-        └── hooks/                      # API hooks、WebSocket 日志 hook、Query SSE hook
+        ├── agentbox.ts                 # AgentBox 类 (create/query/delete)
+        ├── types.ts                    # 类型定义 + 类型守卫
+        ├── sse.ts                      # SSE 流解析器
+        ├── errors.ts                   # 错误类
+        └── index.ts                    # barrel export
 ```
 
 ### 运行测试
@@ -507,11 +520,85 @@ docker build -t agent-sandbox:latest -f agent-image/Dockerfile .
 - [x] 容器列表/分页查询、历史日志（非实时）查询
 - [x] Control-plane 透传 sidecar 的 `/query` SSE（统一外部入口 + 鉴权 + 流量控制）
 - [x] Skill 管理（ZIP 上传、自动元数据提取、容器内技能复制）
+- [x] TypeScript SDK (`@agentbox/sdk`，零依赖，AsyncGenerator 流式交互)
+- [x] 创建容器时 sidecar 就绪检查（指数退避健康检查重试）
+- [x] SSE 端到端流式透传（sidecar stream::unfold + control-plane bytes_stream，流结束即关闭连接）
+- [x] Token 级流式输出（cc-sdk 本地补丁 + include_partial_messages + stream_event 处理）
 - [ ] 容器池/预热机制
 - [ ] Kubernetes 部署支持
 - [ ] Prometheus 监控指标
 - [ ] 容器快照与恢复
 - [ ] 多节点调度
+
+## TypeScript SDK (`@agentbox/sdk`)
+
+零运行时依赖的 TypeScript SDK，用于从 Node.js (>= 18) 应用调用 AgentBox 平台。仿照 cc-sdk 接口风格，使用 `AsyncGenerator` 流式交互。
+
+### 安装
+
+```bash
+cd sdk && npm install && npm run build
+```
+
+### 使用示例
+
+```ts
+import { AgentBox, isTextDelta } from '@agentbox/sdk'
+
+const agent = await AgentBox.create({
+  agentServer: 'http://localhost:8080',
+  token: 'your-api-key',
+  task: 'You are a helpful coding assistant.',
+  env: {
+    ANTHROPIC_AUTH_TOKEN: 'your-token',
+    ANTHROPIC_BASE_URL: 'https://api.anthropic.com',
+    ANTHROPIC_MODEL: 'claude-sonnet-4-6',
+  },
+})
+
+for await (const msg of agent.query('What is 2+2?', {
+  max_turns: 1,
+  include_partial_messages: true, // token-by-token streaming
+})) {
+  if (msg.type === 'stream_event' && msg.event.type === 'content_block_delta') {
+    if (isTextDelta(msg.event.delta)) process.stdout.write(msg.event.delta.text)
+  }
+}
+
+await agent.delete()
+```
+
+### API
+
+| 方法 | 说明 |
+|------|------|
+| `AgentBox.create(config)` | 创建容器，返回 `AgentBox` 实例 |
+| `agent.query(prompt, options?)` | 流式查询，返回 `AsyncGenerator<Message>` |
+| `agent.delete()` | 删除容器（幂等） |
+
+### 配置 (`AgentBoxConfig`)
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `agentServer` | string | ✅ | Control Plane URL |
+| `token` | string | ✅ | Control Plane API key |
+| `task` | string | ✅ | Agent 任务描述 |
+| `env` | object | ❌ | 注入到容器的 LLM 环境变量 |
+| `skill_ids` | string[] | ❌ | 已上传的 Skill ID |
+| `skill_repos` | string[] | ❌ | Skill Git 仓库地址 |
+| `cpu_limit` | string | ❌ | CPU 限制 |
+| `memory_limit` | string | ❌ | 内存限制 |
+| `idle_timeout` | number | ❌ | 空闲超时(秒) |
+| `max_lifetime` | number | ❌ | 最大生命周期(秒) |
+
+`env` 字段中的所有环境变量会注入到容器内，供 Claude CLI 使用。常见变量：`ANTHROPIC_AUTH_TOKEN`、`ANTHROPIC_BASE_URL`、`ANTHROPIC_MODEL` 等。
+
+### Demo
+
+```bash
+cp .env.example .env   # 填入实际配置
+npx tsx demo.ts
+```
 
 ## Admin UI
 

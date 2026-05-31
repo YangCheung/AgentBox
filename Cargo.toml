@@ -4,3 +4,6 @@ members = [
     "sidecar",
 ]
 resolver = "2"
+
+[patch.crates-io]
+cc-sdk = { path = "cc-sdk-local" }

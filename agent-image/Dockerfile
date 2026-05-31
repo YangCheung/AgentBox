@@ -7,6 +7,7 @@ RUN apt-get update && apt-get install -y pkg-config libssl-dev && rm -rf /var/li
 COPY Cargo.toml Cargo.lock ./
 COPY control-plane/Cargo.toml ./control-plane/
 COPY sidecar/Cargo.toml ./sidecar/
+COPY cc-sdk-local/ ./cc-sdk-local/
 
 RUN mkdir -p control-plane/src && echo "fn main() {}" > control-plane/src/main.rs
 RUN mkdir -p sidecar/src && echo "fn main() {}" > sidecar/src/main.rs
