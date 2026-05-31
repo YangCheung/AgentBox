@@ -31,6 +31,9 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
 
 ENV NODE_ENV=production
 RUN npm install -g @anthropic-ai/claude-code \
+    && ARCH=$(uname -m) \
+    && if [ "$ARCH" = "aarch64" ]; then ARCH="arm64"; elif [ "$ARCH" = "x86_64" ]; then ARCH="x64"; fi \
+    && npm install -g @anthropic-ai/claude-code-linux-${ARCH} \
     && npm cache clean --force
 
 WORKDIR /workspace
