@@ -18,31 +18,37 @@ RUN cargo build --release -p sidecar
 
 FROM ubuntu:24.04
 
+# Base OS packages (stable, cached)
 RUN apt-get update && apt-get install -y \
     curl \
     git \
     ca-certificates \
     gnupg \
+    python3 \
+    python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
+# Node.js 20 LTS (stable, cached)
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs \
     && rm -rf /var/lib/apt/lists/*
 
+WORKDIR /workspace
+RUN mkdir -p /workspace/skills
+
+# Sidecar binary (changes with code)
+COPY --from=builder /app/target/release/sidecar /usr/local/bin/sidecar
+
+COPY agent-image/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+# Claude Code (changes frequently, placed last to maximize cache)
 ENV NODE_ENV=production
 RUN npm install -g @anthropic-ai/claude-code \
     && ARCH=$(uname -m) \
     && if [ "$ARCH" = "aarch64" ]; then ARCH="arm64"; elif [ "$ARCH" = "x86_64" ]; then ARCH="x64"; fi \
     && npm install -g @anthropic-ai/claude-code-linux-${ARCH} \
     && npm cache clean --force
-
-WORKDIR /workspace
-RUN mkdir -p /workspace/skills
-
-COPY --from=builder /app/target/release/sidecar /usr/local/bin/sidecar
-
-COPY agent-image/entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
 
 EXPOSE 9000
 
